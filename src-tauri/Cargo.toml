@@ -1,0 +1,89 @@
+[package]
+name = "secure-vault-tauri"
+version = "1.0.0"
+description = "USB 포터블 보안 파일 매니저 - 완전 오프라인"
+authors = ["SecureVault Team"]
+license = "MIT"
+edition = "2021"
+
+# Windows 전용 최적화
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "secure_vault_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri 프레임워크 (네트워크 기능 제외)
+tauri = { version = "2", features = ["devtools", "wry"], default-features = false }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["rt-multi-thread", "fs", "io-util", "time", "sync", "macros"], default-features = false }
+
+# 암호화 라이브러리 (오프라인 전용)
+aes-gcm = "0.10"
+argon2 = "0.5"
+ring = "0.17"
+rand = "0.8"
+chacha20poly1305 = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+hmac = "0.12"
+base64 = "0.21"
+regex = "1.0"
+
+# 파일 처리 (로컬 전용)
+walkdir = "2.0"
+tempfile = "3.0"
+flate2 = "1.0"
+lz4 = "1.24"
+num_cpus = "1.0"
+encoding_rs = "0.8"
+mime_guess = "2.0"
+
+# 데이터베이스 (로컬 전용)
+rusqlite = { version = "0.29", features = ["bundled"] }
+
+# Windows 전용 라이브러리
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [
+  "winuser",
+  "processthreadsapi",
+  "memoryapi",
+  "handleapi"
+] }
+windows = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_Security"
+] }
+
+# 유틸리티 (네트워크 기능 제외)
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# 네트워크 관련 기능 완전 비활성화
+[patch.crates-io]
+# 네트워크 관련 크레이트들을 빈 구현으로 대체하거나 제거

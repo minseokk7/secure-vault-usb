@@ -1,0 +1,28 @@
+
+# Rust
+/target
+/src-tauri/target
+**/*.rs.bk
+
+# Node.js
+/node_modules
+/.svelte-kit
+/build
+.env
+.env.*
+!.env.example
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Other
+.securevault/
+*.log
