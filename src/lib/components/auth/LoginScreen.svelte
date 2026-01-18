@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { createEventDispatcher } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // 이벤트 디스패처
   const dispatch = createEventDispatcher<{
@@ -10,58 +10,112 @@
   }>();
 
   // 상태 변수들
-  let pin = '';
+  let pin = "";
   let showPassword = false;
   let isLoading = false;
-  let errorMessage = '';
+  let errorMessage = "";
+
+  // 복구 모드 상태
+  let isRecoveryMode = false;
+  let recoveryKey = "";
+  let showNewPin = false; // 복구 성공 후 새 PIN 설정 화면
+
+  // 새 PIN 설정용 변수
+  let newPin = "";
+  let confirmPin = "";
+
+  // 복구 처리
+  async function handleRecovery() {
+    if (!recoveryKey || recoveryKey.trim().length === 0) {
+      errorMessage = "복구 키를 입력해주세요.";
+      return;
+    }
+
+    isLoading = true;
+    errorMessage = "";
+
+    try {
+      const success = await invoke("authenticate_recovery_key", {
+        recoveryKey: recoveryKey.trim(),
+      });
+
+      if (success) {
+        console.log("복구 키 인증 성공");
+        showNewPin = true; // 새 PIN 설정 화면으로 전환
+      } else {
+        errorMessage = "올바르지 않은 복잡 키입니다. 다시 확인해주세요.";
+      }
+    } catch (error) {
+      console.error("복구 키 인증 오류:", error);
+      errorMessage =
+        typeof error === "string" ? error : "복구 처리 중 오류가 발생했습니다.";
+    } finally {
+      isLoading = false;
+    }
+  }
+
+  // 새 PIN 설정 처리 (복구 후)
+  async function handleResetPin() {
+    if (newPin.length < 4 || newPin.length > 8) {
+      errorMessage = "PIN은 4~8자리여야 합니다.";
+      return;
+    }
+    if (newPin !== confirmPin) {
+      errorMessage = "PIN이 일치하지 않습니다.";
+      return;
+    }
+
+    isLoading = true;
+    errorMessage = "";
+
+    try {
+      await invoke("set_pin_code", { pin: newPin, complexity: "basic" });
+      dispatch("loginSuccess", { pin: newPin });
+    } catch (error) {
+      errorMessage =
+        typeof error === "string" ? error : "PIN 설정 중 오류 발생";
+    } finally {
+      isLoading = false;
+    }
+  }
 
   // 로그인 처리
   async function handleLogin() {
     if (!pin || pin.length < 4) {
-      errorMessage = 'PIN을 4자리 이상 입력해주세요.';
+      errorMessage = "PIN을 4자리 이상 입력해주세요.";
       return;
     }
 
     if (pin.length > 8) {
-      errorMessage = 'PIN은 8자리를 초과할 수 없습니다.';
+      errorMessage = "PIN은 8자리를 초과할 수 없습니다.";
       return;
     }
 
     // 숫자만 허용
     if (!/^\d+$/.test(pin)) {
-      errorMessage = 'PIN은 숫자만 입력 가능합니다.';
+      errorMessage = "PIN은 숫자만 입력 가능합니다.";
       return;
     }
 
     isLoading = true;
-    errorMessage = '';
+    errorMessage = "";
 
     try {
-      // 임시로 간단한 PIN 검증 (실제 구현에서는 Tauri 백엔드 호출)
-      // 개발용: 아무 4자리 이상 숫자면 로그인 성공
-      if (pin.length >= 4) {
-        console.log('로그인 성공 (개발 모드):', pin);
-        dispatch('loginSuccess', { pin });
-      } else {
-        errorMessage = '잘못된 PIN입니다. 다시 시도해주세요.';
-        dispatch('loginFailed', { error: errorMessage });
-      }
-      
-      // 실제 Tauri 백엔드 호출 (주석 처리)
-      /*
-      const success = await invoke('authenticate_pin', { pin });
-      
+      // 실제 Tauri 백엔드 호출 (마스터 키 설정 필수!)
+      const success = await invoke("authenticate_pin", { pin });
+
       if (success) {
-        dispatch('loginSuccess', { pin });
+        console.log("로그인 성공:", pin);
+        dispatch("loginSuccess", { pin });
       } else {
-        errorMessage = '잘못된 PIN입니다. 다시 시도해주세요.';
-        dispatch('loginFailed', { error: errorMessage });
+        errorMessage = "잘못된 PIN입니다. 다시 시도해주세요.";
+        dispatch("loginFailed", { error: errorMessage });
       }
-      */
     } catch (error) {
-      console.error('PIN 인증 오류:', error);
-      errorMessage = '인증 처리 중 오류가 발생했습니다.';
-      dispatch('loginFailed', { error: errorMessage });
+      console.error("PIN 인증 오류:", error);
+      errorMessage =
+        typeof error === "string" ? error : "인증 처리 중 오류가 발생했습니다.";
+      dispatch("loginFailed", { error: errorMessage });
     } finally {
       isLoading = false;
     }
@@ -73,7 +127,7 @@
       const window = getCurrentWindow();
       await window.minimize();
     } catch (error) {
-      console.error('창 최소화 오류:', error);
+      console.error("창 최소화 오류:", error);
     }
   }
 
@@ -82,7 +136,7 @@
       const window = getCurrentWindow();
       await window.toggleMaximize();
     } catch (error) {
-      console.error('창 최대화 오류:', error);
+      console.error("창 최대화 오류:", error);
     }
   }
 
@@ -91,24 +145,24 @@
       const window = getCurrentWindow();
       await window.close();
     } catch (error) {
-      console.error('창 닫기 오류:', error);
+      console.error("창 닫기 오류:", error);
     }
   }
 
   // Enter 키 처리
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Enter' && !isLoading) {
+    if (event.key === "Enter" && !isLoading) {
       handleLogin();
     }
-    if (event.key === 'Escape') {
-      pin = '';
-      errorMessage = '';
+    if (event.key === "Escape") {
+      pin = "";
+      errorMessage = "";
     }
   }
 
   // PIN 입력 변경 시 에러 메시지 초기화
   $: if (pin) {
-    errorMessage = '';
+    errorMessage = "";
   }
 </script>
 
@@ -119,34 +173,28 @@
   <div class="header" data-tauri-drag-region>
     <!-- 타이틀바 버튼들 -->
     <div class="titlebar-buttons">
-      <button 
-        class="titlebar-button minimize" 
-        on:click={minimizeWindow} 
+      <button
+        class="titlebar-button minimize"
+        on:click={minimizeWindow}
         title="최소화"
         type="button"
       >
         <svg width="10" height="10" viewBox="0 0 10 10">
-          <path d="M0,5 L10,5" stroke="currentColor" stroke-width="1"/>
+          <path d="M0,5 L10,5" stroke="currentColor" stroke-width="1" />
         </svg>
       </button>
-      <button 
-        class="titlebar-button maximize" 
-        on:click={maximizeWindow} 
-        title="최대화"
-        type="button"
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10">
-          <rect x="0" y="0" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1"/>
-        </svg>
-      </button>
-      <button 
-        class="titlebar-button close" 
-        on:click={closeWindow} 
+      <button
+        class="titlebar-button close"
+        on:click={closeWindow}
         title="닫기"
         type="button"
       >
         <svg width="10" height="10" viewBox="0 0 10 10">
-          <path d="M0,0 L10,10 M0,10 L10,0" stroke="currentColor" stroke-width="1"/>
+          <path
+            d="M0,0 L10,10 M0,10 L10,0"
+            stroke="currentColor"
+            stroke-width="1"
+          />
         </svg>
       </button>
     </div>
@@ -171,54 +219,151 @@
         </div>
       </div>
 
-      <!-- PIN 입력 폼 -->
-      <form on:submit|preventDefault={handleLogin}>
-        <!-- PIN 입력 -->
-        <div class="input-group">
-          <label for="pin">PIN</label>
-          <div class="input-wrapper">
-            <input
-              id="pin"
-              type={showPassword ? 'text' : 'password'}
-              bind:value={pin}
-              placeholder="PIN을 입력하세요"
-              maxlength="8"
-              disabled={isLoading}
-              autocomplete="current-password"
-              inputmode="numeric"
-              pattern="[0-9]*"
-            />
-            <button
-              type="button"
-              class="password-toggle"
-              on:click={() => showPassword = !showPassword}
-              title={showPassword ? 'PIN 숨기기' : 'PIN 보기'}
-              disabled={isLoading}
-            >
-              {showPassword ? '👁️' : '👁️‍🗨️'}
-            </button>
+      <!-- 새 PIN 설정 모드 (복구 성공 후) -->
+      {#if showNewPin}
+        <div class="reset-pin-form">
+          <div class="input-group">
+            <label for="new-pin">새 PIN (4~8자리 숫자)</label>
+            <div class="input-wrapper">
+              <input
+                id="new-pin"
+                type="password"
+                bind:value={newPin}
+                placeholder="새 PIN"
+                maxlength="8"
+                inputmode="numeric"
+                pattern="[0-9]*"
+              />
+            </div>
           </div>
-          {#if errorMessage}
-            <div class="error-message">{errorMessage}</div>
-          {/if}
+          <div class="input-group">
+            <label for="confirm-pin">PIN 확인</label>
+            <div class="input-wrapper">
+              <input
+                id="confirm-pin"
+                type="password"
+                bind:value={confirmPin}
+                placeholder="PIN 확인"
+                maxlength="8"
+                inputmode="numeric"
+                pattern="[0-9]*"
+              />
+            </div>
+            {#if errorMessage}
+              <div class="error-message">{errorMessage}</div>
+            {/if}
+          </div>
+
+          <button
+            type="button"
+            class="login-button recovery-btn"
+            disabled={isLoading || newPin.length < 4}
+            on:click={handleResetPin}
+          >
+            {isLoading ? "설정 중..." : "PIN 재설정 완료"}
+          </button>
         </div>
 
-        <!-- 로그인 버튼 -->
-        <button 
-          type="submit"
-          class="login-button" 
-          disabled={isLoading || pin.length < 4}
-        >
-          {isLoading ? '로그인 중...' : '로그인'}
-        </button>
-      </form>
+        <!-- 일반 로그인 모드 -->
+      {:else if !isRecoveryMode}
+        <!-- PIN 입력 폼 -->
+        <form on:submit|preventDefault={handleLogin}>
+          <!-- PIN 입력 -->
+          <div class="input-group">
+            <label for="pin">PIN</label>
+            <div class="input-wrapper">
+              <input
+                id="pin"
+                type={showPassword ? "text" : "password"}
+                bind:value={pin}
+                placeholder="PIN을 입력하세요"
+                maxlength="8"
+                disabled={isLoading}
+                autocomplete="current-password"
+                inputmode="numeric"
+                pattern="[0-9]*"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                on:click={() => (showPassword = !showPassword)}
+                title={showPassword ? "PIN 숨기기" : "PIN 보기"}
+                disabled={isLoading}
+              >
+                {showPassword ? "👁️" : "👁️‍🗨️"}
+              </button>
+            </div>
+            {#if errorMessage}
+              <div class="error-message">{errorMessage}</div>
+            {/if}
+          </div>
 
-      <!-- 복구 키 옵션 -->
-      <div class="recovery-option">
-        <button type="button" class="recovery-link" disabled={isLoading}>
-          PIN을 잊으셨나요? 복구 키 사용하기
-        </button>
-      </div>
+          <!-- 로그인 버튼 -->
+          <button
+            type="submit"
+            class="login-button"
+            disabled={isLoading || pin.length < 4}
+          >
+            {isLoading ? "로그인 중..." : "로그인"}
+          </button>
+        </form>
+
+        <!-- 복구 키 옵션 -->
+        <div class="recovery-option">
+          <button
+            type="button"
+            class="recovery-link"
+            disabled={isLoading}
+            on:click={() => {
+              isRecoveryMode = true;
+              errorMessage = "";
+              pin = "";
+            }}
+          >
+            PIN을 잊으셨나요? 복구 키 사용하기
+          </button>
+        </div>
+
+        <!-- 복구 모드 -->
+      {:else}
+        <div class="recovery-form">
+          <div class="input-group">
+            <label for="recovery-key">복구 키</label>
+            <textarea
+              id="recovery-key"
+              bind:value={recoveryKey}
+              placeholder="32자리 복구 키를 입력하세요"
+              disabled={isLoading}
+              rows="3"
+            ></textarea>
+            {#if errorMessage}
+              <div class="error-message">{errorMessage}</div>
+            {/if}
+          </div>
+
+          <button
+            type="button"
+            class="login-button recovery-btn"
+            disabled={isLoading || !recoveryKey}
+            on:click={handleRecovery}
+          >
+            {isLoading ? "확인 중..." : "복구 및 PIN 재설정"}
+          </button>
+
+          <button
+            type="button"
+            class="back-link"
+            disabled={isLoading}
+            on:click={() => {
+              isRecoveryMode = false;
+              errorMessage = "";
+              recoveryKey = "";
+            }}
+          >
+            취소하고 돌아가기
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
@@ -250,7 +395,8 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     margin: 0;
     padding: 0;
     overflow: hidden;
@@ -453,7 +599,9 @@
     font-size: 16px;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition:
+      transform 0.2s,
+      box-shadow 0.2s;
     margin-bottom: 16px;
   }
 
@@ -496,5 +644,46 @@
   .recovery-link:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* 복구 키 입력창 스타일 */
+  .input-wrapper textarea {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+    resize: none;
+    font-family: monospace;
+    transition: border-color 0.2s;
+  }
+
+  .input-wrapper textarea:focus {
+    outline: none;
+    border-color: #4f7cff;
+    box-shadow: 0 0 0 3px rgba(79, 124, 255, 0.1);
+  }
+
+  .input-wrapper textarea:disabled {
+    background: #f9fafb;
+    color: #9ca3af;
+  }
+
+  /* 뒤로가기 링크 */
+  .back-link {
+    width: 100%;
+    margin-top: 8px;
+    background: none;
+    border: none;
+    color: #6c757d;
+    font-size: 14px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 8px;
+  }
+
+  .back-link:hover:not(:disabled) {
+    color: #343a40;
   }
 </style>

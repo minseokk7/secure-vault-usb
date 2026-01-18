@@ -3,8 +3,11 @@
   import { goto } from "$app/navigation";
   import { authState, AuthService } from "$lib/stores/auth";
   import { enableToasts, addToast } from "$lib/stores/toast";
+  import FileViewer from "$lib/components/viewers/FileViewer.svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { open, save } from "@tauri-apps/plugin-dialog";
+  import { FileManagerService } from "$lib/stores/file-manager";
 
   // 다이얼로그 컴포넌트들
   import SimpleCreateFolderDialog from "$lib/components/file-manager/SimpleCreateFolderDialog.svelte";
@@ -12,6 +15,8 @@
   import DeleteConfirmDialog from "$lib/components/file-manager/DeleteConfirmDialog.svelte";
   import ExportDialog from "$lib/components/file-manager/ExportDialog.svelte";
   import SimpleRenameDialog from "$lib/components/file-manager/SimpleRenameDialog.svelte";
+  import UploadProgressDialog from "$lib/components/file-manager/UploadProgressDialog.svelte";
+  import SettingsModal from "$lib/components/settings/SettingsModal.svelte";
 
   let isInitializing = $state(true);
 
@@ -35,6 +40,8 @@
   let showExportDialog = $state(false);
   let showRenameDialog = $state(false);
   let showFileViewer = $state(false);
+  let showUploadProgress = $state(false);
+  let showSettingsModal = $state(false);
 
   // 컨텍스트 메뉴 상태
   let showContextMenu = $state(false);
@@ -51,6 +58,13 @@
   let viewerFile = $state<any>(null);
   let viewerContent = $state("");
   let isViewerLoading = $state(false);
+
+  // 업로드 진행률 상태
+  let uploadCurrentFile = $state("");
+  let uploadCurrentIndex = $state(0);
+  let uploadTotalFiles = $state(0);
+  let uploadProgress = $state(0);
+  let uploadIsFolder = $state(false);
 
   // 시간 상태
   let currentTime = $state(new Date());
@@ -101,14 +115,20 @@
     return result;
   });
 
-  // 필터링된 폴더 목록 (현재 폴더의 하위 폴더만)
+  // 필터링된 폴더 목록
   let filteredFolders = $derived.by(() => {
-    // 현재 폴더의 하위 폴더만 필터링
-    let result = folders.filter((f) => {
-      const parentId = f.parent_id || null;
-      const currentId = currentFolder?.id || null;
-      return parentId === currentId;
-    });
+    let result = [];
+
+    // 검색어가 있으면 모든 폴더 대상, 없으면 현재 폴더의 하위 폴더만
+    if (searchQuery.trim()) {
+      result = [...folders];
+    } else {
+      result = folders.filter((f) => {
+        const parentId = f.parent_id || null;
+        const currentId = currentFolder?.id || null;
+        return parentId === currentId;
+      });
+    }
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -122,6 +142,7 @@
   // 파일 추가 핸들러
   async function handleAddFile() {
     try {
+      uploadIsFolder = false;
       console.log("파일 추가 시작...");
       const selected = await open({
         multiple: true,
@@ -132,24 +153,119 @@
 
       if (selected) {
         const paths = Array.isArray(selected) ? selected : [selected];
+
+        // 진행률 다이얼로그 표시
+        uploadTotalFiles = paths.length;
+        uploadCurrentIndex = 0;
+        uploadProgress = 0;
+        showUploadProgress = true;
+
         let successCount = 0;
         let lastError = null;
+        let currentJobId: string | null = null;
+        let unlistenProgress: UnlistenFn | null = null;
+        let unlistenComplete: UnlistenFn | null = null;
+        let unlistenError: UnlistenFn | null = null;
 
-        for (const path of paths) {
+        for (let i = 0; i < paths.length; i++) {
+          const path = paths[i];
           try {
-            console.log("파일 추가 invoke:", path);
-            await invoke("add_file_to_vault", {
+            // 파일명 추출
+            const fileName = path.split(/[\\/]/).pop() || "파일";
+            uploadCurrentFile = fileName;
+            uploadCurrentIndex = i + 1;
+            uploadProgress = 0;
+
+            console.log("스트리밍 업로드 시작:", path);
+
+            // 업로드 시작 (먼저 Job ID 획득)
+            currentJobId = await invoke<string>("start_file_upload", {
               filePath: path,
               fileName: null,
               folderId: currentFolder?.id || null,
             });
+            console.log("업로드 Job ID:", currentJobId);
+
+            // 완료/에러 Promise 설정
+            let uploadResolve!: (value: boolean) => void;
+            let uploadReject!: (reason: any) => void;
+            const uploadPromise = new Promise<boolean>((resolve, reject) => {
+              uploadResolve = resolve;
+              uploadReject = reject;
+            });
+
+            const jobIdToMatch = currentJobId;
+
+            // 진행률 이벤트 리스너
+            unlistenProgress = await listen<{
+              job_id: string;
+              progress: number;
+              bytes_processed: number;
+              total_bytes: number;
+            }>("upload://progress", (event) => {
+              if (event.payload.job_id === jobIdToMatch) {
+                uploadProgress = event.payload.progress * 100;
+                console.log(
+                  `업로드 진행률: ${uploadProgress.toFixed(1)}% (${event.payload.bytes_processed}/${event.payload.total_bytes})`,
+                );
+              }
+            });
+
+            // 완료 이벤트 리스너
+            unlistenComplete = await listen<{
+              job_id: string;
+              file_id: string;
+            }>("upload://complete", (event) => {
+              if (event.payload.job_id === jobIdToMatch) {
+                console.log("업로드 완료:", event.payload.file_id);
+                uploadResolve(true);
+              }
+            });
+
+            // 에러 이벤트 리스너
+            unlistenError = await listen<{ job_id: string; error: string }>(
+              "upload://error",
+              (event) => {
+                if (event.payload.job_id === jobIdToMatch) {
+                  console.error("업로드 오류:", event.payload.error);
+                  uploadReject(new Error(event.payload.error));
+                }
+              },
+            );
+
+            // 완료 대기
+            await uploadPromise;
+
+            // 완료 진행률
+            uploadProgress = 100;
             console.log("파일 추가 성공:", path);
             successCount++;
+
+            // 잠시 대기 (사용자가 진행률을 볼 수 있도록)
+            await new Promise((resolve) => setTimeout(resolve, 200));
           } catch (e) {
             console.error("파일 추가 실패:", path, e);
             lastError = e;
+          } finally {
+            // 이벤트 리스너 정리
+            if (unlistenProgress) {
+              unlistenProgress();
+              unlistenProgress = null;
+            }
+            if (unlistenComplete) {
+              unlistenComplete();
+              unlistenComplete = null;
+            }
+            if (unlistenError) {
+              unlistenError();
+              unlistenError = null;
+            }
+            currentJobId = null;
           }
         }
+
+        // 진행률 다이얼로그 닫기
+        showUploadProgress = false;
 
         if (successCount > 0) {
           addToast({
@@ -170,6 +286,7 @@
         }
       }
     } catch (error) {
+      showUploadProgress = false;
       console.error("파일 추가 실패:", error);
       addToast({
         type: "error",
@@ -183,11 +300,22 @@
   // 폴더 추가 핸들러
   async function handleAddFolder() {
     try {
+      uploadIsFolder = true;
       console.log("폴더 추가 시작...");
       const selected = await open({ directory: true, multiple: false });
       console.log("선택된 폴더:", selected);
 
       if (selected && typeof selected === "string") {
+        // 폴더명 추출
+        const folderName = selected.split(/[\\/]/).pop() || "폴더";
+
+        // 진행률 다이얼로그 표시
+        uploadCurrentFile = folderName;
+        uploadCurrentIndex = 1;
+        uploadTotalFiles = 1;
+        uploadProgress = 0;
+        showUploadProgress = true;
+
         console.log("폴더 추가 invoke:", selected);
         const result = await invoke<{
           folder_count: number;
@@ -196,7 +324,13 @@
           folderPath: selected,
           targetFolderId: currentFolder?.id || null,
         });
+
+        uploadProgress = 100;
         console.log("폴더 추가 결과:", result);
+
+        // 잠시 대기
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        showUploadProgress = false;
 
         addToast({
           type: "success",
@@ -208,6 +342,7 @@
         await loadFiles();
       }
     } catch (error) {
+      showUploadProgress = false;
       console.error("폴더 추가 실패:", error);
       addToast({
         type: "error",
@@ -279,14 +414,46 @@
   }
 
   // 검색 핸들러
-  function handleSearch() {
-    // 이미 derived에서 필터링되므로 별도 처리 불필요
-    if (searchQuery.trim()) {
+  async function handleSearch() {
+    if (!searchQuery.trim()) {
+      // 검색어가 비어있으면 현재 폴더로 리셋
+      if (currentFolder) {
+        await loadFiles();
+      } else {
+        await Promise.all([loadFiles(), loadFolders()]);
+      }
+      return;
+    }
+
+    try {
+      console.log("검색 시작:", searchQuery);
+      const result = await invoke<{ files: any[]; folders: any[] }>(
+        "search_files",
+        {
+          query: searchQuery,
+          folderId: null, // 전체 검색
+        },
+      );
+
+      console.log("검색 결과:", result);
+      files = result.files || [];
+      folders = result.folders || [];
+
+      // 검색 모드 알림
       addToast({
         type: "info",
-        title: "검색 결과",
-        message: `${filteredFiles.length}개 파일, ${filteredFolders.length}개 폴더`,
+        title: "검색 완료",
+        message: `${files.length}개 파일, ${folders.length}개 폴더를 찾았습니다.`,
         duration: 2000,
+      });
+    } catch (error) {
+      console.error("검색 실패:", error);
+      addToast({
+        type: "error",
+        title: "검색 실패",
+        message:
+          typeof error === "string" ? error : "검색 중 오류가 발생했습니다.",
+        duration: 3000,
       });
     }
   }
@@ -317,6 +484,35 @@
     } catch (error) {
       console.error("폴더 목록 로드 실패:", error);
       folders = [];
+    }
+  }
+
+  // 세션 시간 로드
+  async function loadSessionTime() {
+    try {
+      const time = await invoke<number>("get_session_remaining_time");
+      sessionTime = time;
+
+      if (time <= 0) {
+        console.log("세션 만료. 로그아웃 처리...");
+        await handleLogout();
+      }
+    } catch (error) {
+      console.error("세션 시간 로드 실패:", error);
+    }
+  }
+
+  // 로그아웃 처리
+  async function handleLogout() {
+    try {
+      console.log("로그아웃 실행...");
+      await AuthService.logout();
+      await AuthService.resizeWindowForLogin();
+      await goto("/");
+    } catch (error) {
+      console.error("로그아웃 실패:", error);
+      // 실패하더라도 강제 이동 시도
+      await goto("/");
     }
   }
 
@@ -363,54 +559,10 @@
 
   // 파일 뷰어 열기
   async function openFile(file: any) {
-    viewerFile = file;
-    isViewerLoading = true;
-    showFileViewer = true;
-
     try {
-      // 텍스트 파일인지 확인
-      const textExtensions = [
-        "txt",
-        "md",
-        "json",
-        "js",
-        "ts",
-        "html",
-        "css",
-        "xml",
-        "yaml",
-        "yml",
-        "ini",
-        "cfg",
-        "log",
-        "py",
-        "rs",
-        "go",
-        "java",
-        "c",
-        "cpp",
-        "h",
-        "sh",
-        "bat",
-        "ps1",
-      ];
-      const ext = (file.file_extension || "").toLowerCase();
-
-      if (textExtensions.includes(ext)) {
-        const content = await invoke<string>("get_text_file_content", {
-          fileId: file.id,
-        });
-        viewerContent = content;
-      } else if (file.mime_type?.startsWith("image/")) {
-        // 이미지 파일은 base64로 로드
-        const data = await invoke<number[]>("get_file_content", {
-          fileId: file.id,
-        });
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(data)));
-        viewerContent = `data:${file.mime_type};base64,${base64}`;
-      } else {
-        viewerContent = "";
-      }
+      isViewerLoading = true;
+      viewerFile = file;
+      showFileViewer = true;
     } catch (error) {
       console.error("파일 로드 실패:", error);
       addToast({
@@ -430,6 +582,11 @@
     showFileViewer = false;
     viewerFile = null;
     viewerContent = "";
+  }
+
+  async function handleFileSaved(event: CustomEvent) {
+    console.log("파일 저장됨:", event.detail);
+    await loadFiles();
   }
 
   // 컨텍스트 메뉴
@@ -471,7 +628,7 @@
         handleDelete();
         break;
       case "export":
-        handleExport();
+        handleFileExportAction();
         break;
       case "newFile":
         handleCreateFile();
@@ -546,28 +703,29 @@
     }
   }
 
+  // 삭제 확인
   async function onDeleteConfirmed() {
     showDeleteDialog = false;
-
-    // 현재 폴더가 삭제 목록에 포함되어 있는지 확인
-    const currentDeleted =
-      currentFolder && deleteItems.some((item) => item.id === currentFolder.id);
-    const targetParentId = currentFolder?.parent_id;
-
     try {
-      for (const file of deleteItems.filter(
-        (item) => item.file_name !== undefined,
-      )) {
-        await invoke("delete_file_from_vault", { fileId: file.id });
+      let currentDeleted = false;
+      const targetParentId = currentFolder?.parent_id;
+
+      for (const item of deleteItems) {
+        if (item.file_name) {
+          // 파일 삭제
+          await invoke("delete_file_from_vault", { fileId: item.id });
+        } else {
+          // 폴더 삭제
+          await invoke("delete_folder", {
+            folderId: item.id,
+            recursive: true,
+          });
+          if (currentFolder?.id === item.id) {
+            currentDeleted = true;
+          }
+        }
       }
-      for (const folder of deleteItems.filter(
-        (item) => item.file_name === undefined,
-      )) {
-        await invoke("delete_folder", {
-          folderId: folder.id,
-          recursive: true,
-        });
-      }
+
       addToast({
         type: "success",
         title: "삭제 완료",
@@ -597,23 +755,104 @@
     }
   }
 
+  function handleFileExportAction() {
+    console.log("export action triggered", {
+      selectedFiles: selectedFiles.size,
+      selectedFolders: selectedFolders.size,
+    });
+
+    if (selectedFiles.size === 0 && selectedFolders.size === 0) {
+      console.log("no items selected");
+      addToast({
+        type: "warning",
+        title: "선택된 항목 없음",
+        message: "내보낼 파일이나 폴더를 선택해주세요.",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const filesToExport = filteredFiles
+      .filter((f) => selectedFiles.has(f.id))
+      .map((f) => ({ ...f, type: "file" }));
+
+    // 수정: filteredFolders 대신 전체 folders에서 검색하여 사이드바 등에서 선택된 폴더도 포함
+    const foldersToExport = folders
+      .filter((f) => selectedFolders.has(f.id))
+      .map((f) => ({ ...f, type: "folder", file_name: f.name })); // 폴더는 name을 file_name으로 매핑
+
+    const allItems = [...filesToExport, ...foldersToExport];
+    console.log("items to export:", allItems);
+
+    if (allItems.length === 0) {
+      console.log("export list empty");
+      return;
+    }
+
+    exportFiles = allItems as any[]; // 타입 호환성을 위해 any 캐스팅
+    showExportDialog = true;
+    console.log("showExportDialog set to true");
+  }
+
   async function onExported(event: CustomEvent<{ exportPath: string }>) {
+    console.log("onExported event received:", event.detail);
     showExportDialog = false;
     try {
-      for (const file of exportFiles) {
-        await invoke("export_file_from_vault", {
-          fileId: file.id,
-          exportPath: event.detail.exportPath,
-        });
+      const targetPath = event.detail.exportPath;
+
+      if (exportFiles.length === 1) {
+        const item = exportFiles[0];
+        console.log(`Exporting single item (${item.type}) to:`, targetPath);
+
+        if (item.type === "folder") {
+          await invoke("export_folder", {
+            folderId: item.id,
+            exportPath: targetPath,
+          });
+        } else {
+          await invoke("export_file", {
+            fileId: item.id,
+            exportPath: targetPath,
+          });
+        }
+      } else {
+        // 다중 파일인 경우: targetPath는 디렉토리 경로임 (open 다이얼로그)
+        console.log("Exporting multiple items to directory:", targetPath);
+        const separator = targetPath.includes("\\") ? "\\" : "/";
+
+        const items = exportFiles as any[];
+        for (const item of items) {
+          // item.file_name은 위에서 매핑함 (폴더인 경우 name)
+          const name = item.file_name || item.name;
+          const fullPath = `${targetPath}${targetPath.endsWith(separator) ? "" : separator}${name}`;
+          console.log(`Exporting ${item.type} ${name} to:`, fullPath);
+
+          if (item.type === "folder") {
+            // 폴더 내보내기 (재귀적)
+            await invoke("export_folder", {
+              folderId: item.id,
+              exportPath: fullPath, // 전체 경로 전달
+            });
+          } else {
+            // 파일 내보내기
+            await invoke("export_file", {
+              fileId: item.id,
+              exportPath: fullPath,
+            });
+          }
+        }
       }
+
       addToast({
         type: "success",
         title: "내보내기 완료",
-        message: `${exportFiles.length}개 파일이 내보내졌습니다.`,
+        message: `${exportFiles.length}개 항목이 내보내졌습니다.`,
         duration: 3000,
       });
       selectedFiles = new Set();
+      selectedFolders = new Set();
     } catch (error) {
+      console.error("Export failed:", error);
       addToast({
         type: "error",
         title: "내보내기 실패",
@@ -643,8 +882,7 @@
         message: `'${event.detail.newName}'으로 변경되었습니다.`,
         duration: 3000,
       });
-      selectedFiles = new Set();
-      selectedFolders = new Set();
+      // 데이터 갱신
       await Promise.all([loadFiles(), loadFolders()]);
     } catch (error) {
       addToast({
@@ -736,35 +974,86 @@
   // 정렬된 폴더 목록
   let sortedFolders = $derived(getSortedFolders());
 
-  onMount(async () => {
-    if (!$authState.isAuthenticated) {
-      await goto("/");
-      return;
-    }
+  onMount(() => {
+    let unlistenDrop: UnlistenFn | undefined;
 
-    try {
-      // 볼트 초기화 (데이터베이스 생성)
-      await invoke("initialize_vault");
+    const init = async () => {
+      if (!$authState.isAuthenticated) {
+        await goto("/");
+        return;
+      }
 
-      await AuthService.resizeWindowForFileManager();
-      enableToasts();
-      await Promise.all([loadFiles(), loadFolders()]);
+      try {
+        // 파일 드롭 리스너 등록
+        unlistenDrop = await listen("tauri://drop", async (event: any) => {
+          const paths = event.payload.paths as string[];
+          if (paths && paths.length > 0) {
+            console.log("파일 드롭 감지:", paths);
+            const targetFolderId = currentFolder?.id || undefined;
+            await FileManagerService.uploadFiles(paths, targetFolderId);
+          }
+        });
 
-      timeInterval = window.setInterval(() => {
-        currentTime = new Date();
-        if (sessionTime > 0) sessionTime--;
-      }, 1000);
+        // 볼트 초기화 (데이터베이스 생성)
+        await invoke("initialize_vault");
 
-      isInitializing = false;
-    } catch (error) {
-      console.error("초기화 실패:", error);
-      isInitializing = false;
-    }
+        await AuthService.resizeWindowForFileManager();
+        enableToasts();
+        await Promise.all([loadFiles(), loadFolders(), loadSessionTime()]);
+
+        timeInterval = window.setInterval(async () => {
+          currentTime = new Date();
+          // 백엔드와 세션 시간 동기화 (10초마다 또는 로컬 카운트가 0일 때)
+          if (sessionTime % 10 === 0 || sessionTime <= 0) {
+            await loadSessionTime();
+          } else {
+            if (sessionTime > 0) sessionTime--;
+          }
+        }, 1000);
+
+        isInitializing = false;
+      } catch (error) {
+        console.error("초기화 실패:", error);
+        // 오류 발생 시에도 기본 UI 로드 시도
+        try {
+          await Promise.all([loadFiles(), loadFolders()]);
+        } catch (e) {
+          console.error("기본 로드 실패:", e);
+        }
+        isInitializing = false;
+      }
+    };
+
+    init();
+
+    return () => {
+      if (unlistenDrop) unlistenDrop();
+      if (timeInterval) clearInterval(timeInterval);
+    };
   });
 
   onDestroy(() => {
+    // onDestroy cleanup is now handled in onMount return, but keeping existing strict cleanup if needed.
+    // However, onMount return is the preferred way for component lifecycle cleanup in Svelte.
+    // We can keep onDestroy for safety regarding timeInterval if it was defined outside.
     if (timeInterval) clearInterval(timeInterval);
   });
+
+  // 윈도우 컨트롤 함수들
+  async function minimizeWindow() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().minimize();
+  }
+
+  async function toggleMaximize() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().toggleMaximize();
+  }
+
+  async function closeWindow() {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    await getCurrentWindow().close();
+  }
 
   function handleKeyDown(event: KeyboardEvent) {
     if (
@@ -821,16 +1110,30 @@
     <!-- 헤더 -->
     <header class="header">
       <div class="header-left">
-        <span class="logo">🔒</span>
+        <span
+          class="logo"
+          onclick={handleLogout}
+          onkeydown={(e) => e.key === "Enter" && handleLogout()}
+          role="button"
+          tabindex="0"
+          title="로그아웃"
+          style="cursor: pointer;">🔒</span
+        >
         <div class="header-text">
           <h1>SecureVault</h1>
-          <span class="subtitle">포일 매니저</span>
+          <span class="subtitle">파일 매니저</span>
         </div>
       </div>
       <div class="window-controls">
-        <button class="win-btn minimize">─</button>
-        <button class="win-btn maximize">□</button>
-        <button class="win-btn close">×</button>
+        <button class="win-btn minimize" onclick={minimizeWindow} title="최소화"
+          >─</button
+        >
+        <button class="win-btn maximize" onclick={toggleMaximize} title="최대화"
+          >□</button
+        >
+        <button class="win-btn close" onclick={closeWindow} title="닫기"
+          >×</button
+        >
       </div>
     </header>
 
@@ -873,8 +1176,8 @@
         </button>
         <button
           class="tool-btn"
-          onclick={handleExport}
-          disabled={selectedFiles.size === 0}
+          onclick={handleFileExportAction}
+          disabled={selectedCount === 0}
         >
           <span class="icon">📤</span>
           <span class="label">내보내기</span>
@@ -883,6 +1186,11 @@
         <button class="tool-btn" onclick={handleRefresh}>
           <span class="icon">🔄</span>
           <span class="label">새로고침</span>
+        </button>
+        <div class="separator"></div>
+        <button class="tool-btn" onclick={() => (showSettingsModal = true)}>
+          <span class="icon">⚙️</span>
+          <span class="label">설정</span>
         </button>
       </div>
 
@@ -1067,6 +1375,10 @@
                     {/if}
                     <span class="file-meta">
                       {formatFileSize(file.file_size || 0)}
+                      ·
+                      <span class="mime-type"
+                        >{file.mime_type || "Unknown"}</span
+                      >
                       {#if viewMode !== "grid"}
                         · {new Date(file.modified_date).toLocaleDateString(
                           "ko-KR",
@@ -1139,6 +1451,10 @@
           class="context-item"
           onclick={() => selectFolder(contextMenuTarget)}>📂 폴더 열기</button
         >
+        <button
+          class="context-item"
+          onclick={() => handleContextMenuAction("export")}>📤 내보내기</button
+        >
         <div class="context-separator"></div>
         <button
           class="context-item"
@@ -1169,42 +1485,12 @@
 
   <!-- 파일 뷰어 -->
   {#if showFileViewer && viewerFile}
-    <div class="viewer-overlay" onclick={closeViewer}>
-      <div class="viewer-container" onclick={(e) => e.stopPropagation()}>
-        <div class="viewer-header">
-          <h2>{viewerFile.file_name}</h2>
-          <button class="viewer-close" onclick={closeViewer}>✕</button>
-        </div>
-        <div class="viewer-content">
-          {#if isViewerLoading}
-            <div class="viewer-loading">
-              <div class="loading-spinner"></div>
-              <p>파일 로드 중...</p>
-            </div>
-          {:else if viewerFile.mime_type?.startsWith("image/")}
-            <img
-              src={viewerContent}
-              alt={viewerFile.file_name}
-              class="viewer-image"
-            />
-          {:else if viewerContent}
-            <pre class="viewer-text">{viewerContent}</pre>
-          {:else}
-            <div class="viewer-unsupported">
-              <span class="icon">{getFileIcon(viewerFile)}</span>
-              <p>이 파일 형식은 미리보기가 지원되지 않습니다.</p>
-              <button
-                class="btn-export"
-                onclick={() => {
-                  closeViewer();
-                  handleExport();
-                }}>📤 내보내기</button
-              >
-            </div>
-          {/if}
-        </div>
-      </div>
-    </div>
+    <FileViewer
+      file={viewerFile}
+      isOpen={showFileViewer}
+      on:close={closeViewer}
+      on:save={handleFileSaved}
+    />
   {/if}
 
   <!-- 다이얼로그들 -->
@@ -1220,6 +1506,14 @@
       show={showNewFileDialog}
       on:fileCreated={onFileCreated}
       on:close={() => (showNewFileDialog = false)}
+    />
+  {/if}
+  {#if showDeleteDialog}
+    <DeleteConfirmDialog
+      show={showDeleteDialog}
+      items={deleteItems}
+      on:confirmed={onDeleteConfirmed}
+      on:close={() => (showDeleteDialog = false)}
     />
   {/if}
   {#if showDeleteDialog}
@@ -1249,6 +1543,23 @@
       on:close={() => (showRenameDialog = false)}
     />
   {/if}
+
+  <!-- 업로드 진행률 다이얼로그 -->
+  <UploadProgressDialog
+    show={showUploadProgress}
+    currentFile={uploadCurrentFile}
+    currentIndex={uploadCurrentIndex}
+    totalFiles={uploadTotalFiles}
+    progress={uploadProgress}
+    isFolder={uploadIsFolder}
+  />
+  {#if showSettingsModal}
+    <SettingsModal
+      show={showSettingsModal}
+      on:close={() => (showSettingsModal = false)}
+      on:sessionTimeUpdated={loadSessionTime}
+    />
+  {/if}
 {/if}
 
 <style>
@@ -1264,15 +1575,15 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: #f5f5f5;
+    background: #f0f4f8;
     gap: 16px;
   }
 
   .loading-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid #e0e0e0;
-    border-top-color: #4a90d9;
+    border: 3px solid #d0d8e0;
+    border-top-color: #2563eb;
     border-radius: 50%;
     animation: spin 1s linear infinite;
   }
@@ -1287,7 +1598,7 @@
     height: 100vh;
     display: flex;
     flex-direction: column;
-    background: #f5f5f5;
+    background: #f0f4f8;
     font-family:
       "Segoe UI",
       -apple-system,
@@ -1300,7 +1611,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 8px 16px;
-    background: linear-gradient(135deg, #4a7fb5 0%, #5a8fc5 100%);
+    background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
     color: white;
     -webkit-app-region: drag;
   }
@@ -1349,8 +1660,8 @@
     justify-content: space-between;
     align-items: center;
     padding: 8px 12px;
-    background: white;
-    border-bottom: 1px solid #e0e0e0;
+    background: #ffffff;
+    border-bottom: 1px solid #d1d5db;
     gap: 16px;
     flex-wrap: wrap;
   }
@@ -1365,38 +1676,38 @@
     align-items: center;
     gap: 2px;
     padding: 6px 10px;
-    border: 1px solid #d0d0d0;
-    background: #f8f8f8;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
     border-radius: 4px;
     cursor: pointer;
     font-size: 11px;
-    color: #333;
+    color: #334155;
     min-width: 56px;
     transition: all 0.15s;
   }
   .tool-btn:hover:not(:disabled) {
-    background: #e8e8e8;
-    border-color: #b0b0b0;
+    background: #e2e8f0;
+    border-color: #94a3b8;
   }
   .tool-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
   .tool-btn.primary {
-    background: #4a90d9;
-    border-color: #3a80c9;
+    background: #2563eb;
+    border-color: #1d4ed8;
     color: white;
   }
   .tool-btn.primary:hover {
-    background: #3a80c9;
+    background: #1d4ed8;
   }
   .tool-btn.danger {
-    background: #e57373;
-    border-color: #d56363;
+    background: #ef4444;
+    border-color: #dc2626;
     color: white;
   }
   .tool-btn.danger:hover:not(:disabled) {
-    background: #d56363;
+    background: #dc2626;
   }
   .tool-btn .icon {
     font-size: 16px;
@@ -1407,7 +1718,7 @@
   .separator {
     width: 1px;
     height: 32px;
-    background: #d0d0d0;
+    background: #cbd5e1;
     margin: 0 4px;
   }
 
@@ -1419,7 +1730,7 @@
   .search-box {
     display: flex;
     align-items: center;
-    border: 1px solid #d0d0d0;
+    border: 1px solid #cbd5e1;
     border-radius: 4px;
     overflow: hidden;
   }
@@ -1433,7 +1744,7 @@
   .search-btn {
     padding: 6px 10px;
     border: none;
-    background: #f0f0f0;
+    background: #f1f5f9;
     cursor: pointer;
   }
   .sort-box {
@@ -1444,13 +1755,13 @@
   }
   .sort-box select {
     padding: 4px 8px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid #cbd5e1;
     border-radius: 4px;
     font-size: 12px;
   }
   .sort-order-btn {
     padding: 4px 8px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid #cbd5e1;
     background: white;
     border-radius: 4px;
     cursor: pointer;
@@ -1458,7 +1769,7 @@
   }
   .view-modes {
     display: flex;
-    border: 1px solid #d0d0d0;
+    border: 1px solid #cbd5e1;
     border-radius: 4px;
     overflow: hidden;
   }
@@ -1470,7 +1781,7 @@
     font-size: 14px;
   }
   .view-btn.active {
-    background: #4a90d9;
+    background: #2563eb;
     color: white;
   }
 
@@ -1481,8 +1792,8 @@
   }
   .sidebar {
     width: 200px;
-    background: white;
-    border-right: 1px solid #e0e0e0;
+    background: #ffffff;
+    border-right: 1px solid #d1d5db;
     display: flex;
     flex-direction: column;
   }
@@ -1490,8 +1801,8 @@
     padding: 12px 16px;
     font-size: 12px;
     font-weight: 600;
-    color: #666;
-    border-bottom: 1px solid #e0e0e0;
+    color: #64748b;
+    border-bottom: 1px solid #e2e8f0;
   }
   .folder-tree {
     flex: 1;
@@ -1505,20 +1816,20 @@
     padding: 8px 16px;
     cursor: pointer;
     font-size: 13px;
-    color: #333;
+    color: #334155;
     transition: background 0.15s;
   }
   .folder-item:hover {
-    background: #f0f0f0;
+    background: #f1f5f9;
   }
   .folder-item.active {
-    background: #e3f2fd;
-    color: #1976d2;
-    border-left: 3px solid #1976d2;
+    background: #dbeafe;
+    color: #1e40af;
+    border-left: 3px solid #2563eb;
     padding-left: 13px;
   }
   .folder-item.selected {
-    background: #fff3cd;
+    background: #fef3c7;
   }
   .folder-icon {
     font-size: 14px;
@@ -1527,14 +1838,14 @@
     padding: 16px;
     text-align: center;
     font-size: 12px;
-    color: #999;
+    color: #94a3b8;
   }
 
   .file-area {
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: white;
+    background: #ffffff;
   }
   .breadcrumb {
     display: flex;
@@ -1542,15 +1853,15 @@
     gap: 8px;
     padding: 12px 16px;
     font-size: 13px;
-    color: #666;
-    border-bottom: 1px solid #f0f0f0;
+    color: #64748b;
+    border-bottom: 1px solid #f1f5f9;
   }
   .breadcrumb-icon {
     font-size: 14px;
   }
   .search-indicator {
     margin-left: auto;
-    color: #4a90d9;
+    color: #2563eb;
     font-size: 12px;
   }
   .file-content {
@@ -1566,7 +1877,7 @@
     justify-content: center;
     height: 100%;
     text-align: center;
-    color: #666;
+    color: #64748b;
   }
   .empty-icon {
     font-size: 64px;
@@ -1577,11 +1888,11 @@
     font-size: 18px;
     font-weight: 500;
     margin-bottom: 8px;
-    color: #333;
+    color: #334155;
   }
   .empty-state p {
     font-size: 13px;
-    color: #888;
+    color: #94a3b8;
   }
 
   .file-list {
@@ -1606,13 +1917,16 @@
     border-radius: 4px;
     cursor: pointer;
     transition: background 0.15s;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
   }
   .file-item:hover {
-    background: #f5f5f5;
+    background: #f8fafc;
   }
   .file-item.selected {
-    background: #e3f2fd;
-    outline: 1px solid #90caf9;
+    background: #dbeafe;
+    outline: 1px solid #93c5fd;
   }
   .file-icon {
     font-size: 24px;
@@ -1627,19 +1941,22 @@
   .file-name {
     font-size: 13px;
     font-weight: 500;
-    color: #333;
+    color: #334155;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .file-meta {
     font-size: 11px;
-    color: #888;
+    color: #94a3b8;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
   }
   .file-ext {
     font-size: 10px;
-    color: #666;
-    background: #f0f0f0;
+    color: #64748b;
+    background: #f1f5f9;
     padding: 2px 6px;
     border-radius: 3px;
     align-self: flex-start;
@@ -1655,10 +1972,25 @@
   }
   .file-list.grid .file-info {
     align-items: center;
+    width: 100%;
+    overflow: hidden;
+    position: relative;
   }
   .file-list.grid .file-name {
     text-align: center;
-    max-width: 100%;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: block;
+  }
+
+  /* 그리드 뷰에서 hover 시 텍스트 말줄임표 유지 (스크롤 효과 제거) */
+  .file-list.grid .file-item:hover .file-name {
+    text-overflow: ellipsis;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
   }
 
   .status-bar {
@@ -1666,10 +1998,10 @@
     justify-content: space-between;
     align-items: center;
     padding: 6px 16px;
-    background: #f8f8f8;
-    border-top: 1px solid #e0e0e0;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
     font-size: 11px;
-    color: #666;
+    color: #64748b;
   }
   .status-left,
   .status-right {
@@ -1686,16 +2018,16 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #ccc;
+    background: #cbd5e1;
   }
   .dot.active {
-    background: #4caf50;
+    background: #10b981;
   }
   .status-item.secure {
-    color: #4caf50;
+    color: #10b981;
   }
   .selected-count {
-    color: #4a90d9;
+    color: #2563eb;
     margin-left: 4px;
   }
 
@@ -1703,7 +2035,7 @@
   .context-menu {
     position: fixed;
     background: white;
-    border: 1px solid #d0d0d0;
+    border: 1px solid #cbd5e1;
     border-radius: 4px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     min-width: 160px;
@@ -1723,119 +2055,16 @@
     text-align: left;
   }
   .context-item:hover {
-    background: #f0f0f0;
+    background: #f1f5f9;
   }
   .context-item.danger {
-    color: #dc3545;
+    color: #ef4444;
   }
   .context-separator {
     height: 1px;
-    background: #e0e0e0;
+    background: #e2e8f0;
     margin: 4px 0;
   }
 
   /* 파일 뷰어 */
-  .viewer-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 2000;
-  }
-  .viewer-container {
-    background: white;
-    border-radius: 8px;
-    width: 90%;
-    max-width: 1000px;
-    max-height: 90vh;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .viewer-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px;
-    border-bottom: 1px solid #e0e0e0;
-  }
-  .viewer-header h2 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0;
-  }
-  .viewer-close {
-    width: 32px;
-    height: 32px;
-    border: none;
-    background: #f0f0f0;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 18px;
-  }
-  .viewer-close:hover {
-    background: #e0e0e0;
-  }
-  .viewer-content {
-    flex: 1;
-    overflow: auto;
-    padding: 20px;
-    min-height: 300px;
-  }
-  .viewer-loading {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 200px;
-    gap: 16px;
-  }
-  .viewer-text {
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: "Consolas", monospace;
-    font-size: 13px;
-    line-height: 1.5;
-    background: #f8f8f8;
-    padding: 16px;
-    border-radius: 4px;
-    max-height: 60vh;
-    overflow: auto;
-  }
-  .viewer-image {
-    max-width: 100%;
-    max-height: 60vh;
-    object-fit: contain;
-    margin: 0 auto;
-    display: block;
-  }
-  .viewer-unsupported {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    height: 200px;
-    gap: 16px;
-    color: #666;
-  }
-  .viewer-unsupported .icon {
-    font-size: 48px;
-  }
-  .btn-export {
-    padding: 8px 16px;
-    background: #4a90d9;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .btn-export:hover {
-    background: #3a80c9;
-  }
 </style>

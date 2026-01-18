@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// 미디어 파일의 메타데이터 추출 및 스트리밍 기능을 제공합니다.
 pub struct MediaService {
     /// 볼트 경로
-    vault_path: String,
+    _vault_path: String,
 }
 
 /// 미디어 메타데이터 구조체
@@ -56,27 +56,31 @@ pub struct MediaChunk {
 
 impl MediaService {
     /// 새로운 미디어 서비스 인스턴스를 생성합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `vault_path` - 볼트 디렉토리 경로
-    /// 
+    ///
     /// # 반환값
     /// * `Self` - 미디어 서비스 인스턴스
     pub fn new(vault_path: &str) -> Self {
         Self {
-            vault_path: vault_path.to_string(),
+            _vault_path: vault_path.to_string(),
         }
     }
 
     /// 미디어 파일의 메타데이터를 추출합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_entry` - 파일 엔트리
     /// * `file_data` - 파일 데이터 (메타데이터 추출용)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<MediaMetadata, VaultError>` - 미디어 메타데이터 또는 에러
-    pub fn extract_metadata(&self, file_entry: &FileEntry, _file_data: &[u8]) -> Result<MediaMetadata, VaultError> {
+    pub fn extract_metadata(
+        &self,
+        file_entry: &FileEntry,
+        _file_data: &[u8],
+    ) -> Result<MediaMetadata, VaultError> {
         let extension = self.get_file_extension(&file_entry.file_name);
         let media_type = self.determine_media_type(&extension);
         let mime_type = self.get_mime_type(&extension);
@@ -98,42 +102,49 @@ impl MediaService {
         // 실제 메타데이터 추출 (향후 구현)
         // TODO: 실제 미디어 라이브러리를 사용하여 메타데이터 추출
         // 현재는 파일명 기반으로만 제목 추출
-        
+
         Ok(metadata)
     }
 
     /// 미디어 파일이 지원되는지 확인합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_name` - 파일명
-    /// 
+    ///
     /// # 반환값
     /// * `bool` - 지원 여부
     pub fn is_supported(&self, file_name: &str) -> bool {
         let extension = self.get_file_extension(file_name);
-        
+
         const SUPPORTED_EXTENSIONS: &[&str] = &[
             // 오디오 형식
             ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a", ".wma", ".aiff", ".ape", ".opus",
             // 비디오 형식
-            ".mp4", ".webm", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".m4v", ".3gp"
+            ".mp4", ".webm", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".m4v", ".3gp",
         ];
-        
+
         SUPPORTED_EXTENSIONS.contains(&extension.as_str())
     }
 
     /// 미디어 데이터를 청크 단위로 스트리밍합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_data` - 전체 파일 데이터
     /// * `offset` - 시작 오프셋
     /// * `chunk_size` - 청크 크기
-    /// 
+    ///
     /// # 반환값
     /// * `Result<MediaChunk, VaultError>` - 미디어 청크 또는 에러
-    pub fn get_chunk(&self, file_data: &[u8], offset: usize, chunk_size: usize) -> Result<MediaChunk, VaultError> {
+    pub fn get_chunk(
+        &self,
+        file_data: &[u8],
+        offset: usize,
+        chunk_size: usize,
+    ) -> Result<MediaChunk, VaultError> {
         if offset >= file_data.len() {
-            return Err(VaultError::DatabaseError("오프셋이 파일 크기를 초과합니다.".to_string()));
+            return Err(VaultError::DatabaseError(
+                "오프셋이 파일 크기를 초과합니다.".to_string(),
+            ));
         }
 
         let end = std::cmp::min(offset + chunk_size, file_data.len());
@@ -141,7 +152,7 @@ impl MediaService {
         let is_last = end >= file_data.len();
 
         // Base64로 인코딩
-        use base64::{Engine as _, engine::general_purpose};
+        use base64::{engine::general_purpose, Engine as _};
         let encoded_data = general_purpose::STANDARD.encode(chunk_data);
 
         Ok(MediaChunk {
@@ -153,22 +164,23 @@ impl MediaService {
     }
 
     /// 작은 미디어 파일의 전체 데이터를 반환합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_data` - 파일 데이터
     /// * `max_size` - 최대 허용 크기 (바이트)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<String, VaultError>` - Base64 인코딩된 데이터 또는 에러
     pub fn get_full_data(&self, file_data: &[u8], max_size: usize) -> Result<String, VaultError> {
         if file_data.len() > max_size {
-            return Err(VaultError::DatabaseError(
-                format!("파일이 너무 큽니다. 최대 {}MB까지 지원됩니다.", max_size / 1024 / 1024)
-            ));
+            return Err(VaultError::DatabaseError(format!(
+                "파일이 너무 큽니다. 최대 {}MB까지 지원됩니다.",
+                max_size / 1024 / 1024
+            )));
         }
 
         // Base64로 인코딩
-        use base64::{Engine as _, engine::general_purpose};
+        use base64::{engine::general_purpose, Engine as _};
         Ok(general_purpose::STANDARD.encode(file_data))
     }
 
@@ -184,9 +196,9 @@ impl MediaService {
     /// 미디어 타입을 판단합니다.
     fn determine_media_type(&self, extension: &str) -> MediaType {
         const AUDIO_EXTENSIONS: &[&str] = &[
-            ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a", ".wma", ".aiff", ".ape", ".opus"
+            ".mp3", ".wav", ".ogg", ".aac", ".flac", ".m4a", ".wma", ".aiff", ".ape", ".opus",
         ];
-        
+
         if AUDIO_EXTENSIONS.contains(&extension) {
             MediaType::Audio
         } else {
@@ -208,7 +220,7 @@ impl MediaService {
             ".aiff" => "audio/aiff",
             ".ape" => "audio/ape",
             ".opus" => "audio/opus",
-            
+
             // 비디오 형식
             ".mp4" => "video/mp4",
             ".webm" => "video/webm",
@@ -219,9 +231,10 @@ impl MediaService {
             ".wmv" => "video/x-ms-wmv",
             ".m4v" => "video/mp4",
             ".3gp" => "video/3gpp",
-            
+
             _ => "application/octet-stream",
-        }.to_string()
+        }
+        .to_string()
     }
 
     /// 파일명에서 제목을 추출합니다.
@@ -232,7 +245,7 @@ impl MediaService {
         } else {
             file_name
         };
-        
+
         // 빈 문자열이 아니면 제목으로 사용
         if !name_without_ext.is_empty() {
             Some(name_without_ext.to_string())
@@ -249,7 +262,7 @@ mod tests {
     #[test]
     fn test_media_service_creation() {
         let service = MediaService::new("/test/vault");
-        assert_eq!(service.vault_path, "/test/vault");
+        assert_eq!(service._vault_path, "/test/vault");
     }
 
     #[test]
@@ -263,9 +276,18 @@ mod tests {
     #[test]
     fn test_media_type_determination() {
         let service = MediaService::new("/test");
-        assert!(matches!(service.determine_media_type(".mp3"), MediaType::Audio));
-        assert!(matches!(service.determine_media_type(".mp4"), MediaType::Video));
-        assert!(matches!(service.determine_media_type(".flac"), MediaType::Audio));
+        assert!(matches!(
+            service.determine_media_type(".mp3"),
+            MediaType::Audio
+        ));
+        assert!(matches!(
+            service.determine_media_type(".mp4"),
+            MediaType::Video
+        ));
+        assert!(matches!(
+            service.determine_media_type(".flac"),
+            MediaType::Audio
+        ));
     }
 
     #[test]
@@ -273,7 +295,10 @@ mod tests {
         let service = MediaService::new("/test");
         assert_eq!(service.get_mime_type(".mp3"), "audio/mpeg");
         assert_eq!(service.get_mime_type(".mp4"), "video/mp4");
-        assert_eq!(service.get_mime_type(".unknown"), "application/octet-stream");
+        assert_eq!(
+            service.get_mime_type(".unknown"),
+            "application/octet-stream"
+        );
     }
 
     #[test]
@@ -287,8 +312,14 @@ mod tests {
     #[test]
     fn test_title_extraction() {
         let service = MediaService::new("/test");
-        assert_eq!(service.extract_title_from_filename("My Song.mp3"), Some("My Song".to_string()));
-        assert_eq!(service.extract_title_from_filename("video"), Some("video".to_string()));
+        assert_eq!(
+            service.extract_title_from_filename("My Song.mp3"),
+            Some("My Song".to_string())
+        );
+        assert_eq!(
+            service.extract_title_from_filename("video"),
+            Some("video".to_string())
+        );
         assert_eq!(service.extract_title_from_filename(""), None);
     }
 
@@ -296,12 +327,12 @@ mod tests {
     fn test_chunk_creation() {
         let service = MediaService::new("/test");
         let data = b"Hello, World! This is test data for chunking.";
-        
+
         let chunk = service.get_chunk(data, 0, 10).unwrap();
         assert_eq!(chunk.offset, 0);
         assert_eq!(chunk.size, 10);
         assert!(!chunk.is_last);
-        
+
         let last_chunk = service.get_chunk(data, 40, 10).unwrap();
         assert!(last_chunk.is_last);
     }
@@ -310,10 +341,10 @@ mod tests {
     fn test_full_data_encoding() {
         let service = MediaService::new("/test");
         let data = b"Hello, World!";
-        
+
         let encoded = service.get_full_data(data, 1024).unwrap();
         assert!(!encoded.is_empty());
-        
+
         // 너무 큰 파일 테스트
         let result = service.get_full_data(data, 5);
         assert!(result.is_err());

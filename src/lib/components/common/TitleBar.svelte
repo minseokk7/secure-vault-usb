@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { onMount } from "svelte";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   // Props (Svelte 5 runes 모드)
   interface Props {
@@ -8,17 +8,17 @@
     subtitle?: string;
     showIcon?: boolean;
     showTitle?: boolean;
-    variant?: 'gradient' | 'solid';
+    variant?: "gradient" | "solid";
     showMaximize?: boolean;
   }
 
   const {
-    title = 'SecureVault',
-    subtitle = '보안 파일 매니저',
+    title = "SecureVault",
+    subtitle = "보안 파일 매니저",
     showIcon = true,
     showTitle = true,
-    variant = 'gradient',
-    showMaximize = true
+    variant = "gradient",
+    showMaximize = true,
   }: Props = $props();
 
   let appWindow: any;
@@ -27,11 +27,11 @@
   // 컴포넌트 마운트 시 윈도우 객체 가져오기
   onMount(async () => {
     appWindow = getCurrentWindow();
-    
+
     if (showMaximize) {
       // 현재 최대화 상태 확인
       isMaximized = await appWindow.isMaximized();
-      
+
       // 윈도우 상태 변경 이벤트 리스너
       const unlistenResize = await appWindow.onResized(() => {
         checkMaximized();
@@ -89,22 +89,27 @@
 </script>
 
 <!-- 커스텀 타이틀바 -->
-<div 
-  class="titlebar {variant}"
-  data-tauri-drag-region
-  ondblclick={handleDoubleClick}
->
+<div class="titlebar {variant}" ondblclick={handleDoubleClick}>
   <!-- 왼쪽: 로고 및 제목 -->
   <div class="titlebar-left" data-tauri-drag-region>
     {#if showIcon}
       <div class="titlebar-icon">
-        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+        <svg
+          class="w-6 h-6 text-white"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+          />
         </svg>
       </div>
     {/if}
-    
+
     {#if showTitle}
       <div class="titlebar-title" data-tauri-drag-region>
         <h1 class="title-main text-korean">{title}</h1>
@@ -116,20 +121,30 @@
   <!-- 오른쪽: 윈도우 컨트롤 버튼들 -->
   <div class="titlebar-controls">
     <!-- 최소화 버튼 -->
-    <button 
+    <button
       class="control-button minimize"
       onclick={minimizeWindow}
       title="최소화"
       type="button"
     >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
+      <svg
+        class="w-4 h-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M20 12H4"
+        />
       </svg>
     </button>
 
     {#if showMaximize}
       <!-- 최대화/복원 버튼 -->
-      <button 
+      <button
         class="control-button maximize"
         onclick={toggleMaximize}
         title={isMaximized ? "복원" : "최대화"}
@@ -137,30 +152,57 @@
       >
         {#if isMaximized}
           <!-- 복원 아이콘 -->
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
           </svg>
         {:else}
           <!-- 최대화 아이콘 -->
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-                  d="M4 8V4a2 2 0 012-2h12a2 2 0 012 2v4M4 16v4a2 2 0 002 2h12a2 2 0 002-2v-4"/>
+          <svg
+            class="w-4 h-4"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 8V4a2 2 0 012-2h12a2 2 0 012 2v4M4 16v4a2 2 0 002 2h12a2 2 0 002-2v-4"
+            />
           </svg>
         {/if}
       </button>
     {/if}
 
     <!-- 닫기 버튼 -->
-    <button 
+    <button
       class="control-button close"
       onclick={closeWindow}
       title="닫기"
       type="button"
     >
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
-              d="M6 18L18 6M6 6l12 12"/>
+      <svg
+        class="w-4 h-4"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          d="M6 18L18 6M6 6l12 12"
+        />
       </svg>
     </button>
   </div>
@@ -187,7 +229,7 @@
 
   /* 왼쪽 영역 */
   .titlebar-left {
-    @apply flex items-center gap-3 flex-1;
+    @apply flex items-center gap-3 flex-1 h-full;
   }
 
   /* 아이콘 */

@@ -1,24 +1,28 @@
 <!doctype html>
 <html lang="ko">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%sveltekit.assets%/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>SecureVault - 보안 파일 매니저</title>
-    <meta name="description" content="USB 포터블 보안 파일 매니저 - 파일을 안전하게 암호화하여 저장하고 관리합니다." />
-    <meta name="keywords" content="보안, 파일매니저, 암호화, USB, 포터블" />
-    <meta name="author" content="SecureVault Team" />
-    
-    <!-- 개발/프로덕션 환경별 보안 헤더 -->
-    <!-- 개발 모드: 개발 서버 통신 허용 -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ws://localhost:* http://localhost:* http://ipc.localhost tauri://localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data: blob:;" />
-    <!-- 프로덕션에서는 Tauri 빌드 시 더 엄격한 CSP로 교체됨 -->
-    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
-    <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
-    
-    %sveltekit.head%
-  </head>
-  <body data-sveltekit-preload-data="hover" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
-    <div style="display: contents">%sveltekit.body%</div>
-  </body>
+
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="%sveltekit.assets%/favicon.png" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SecureVault - 보안 파일 매니저</title>
+  <meta name="description" content="USB 포터블 보안 파일 매니저 - 파일을 안전하게 암호화하여 저장하고 관리합니다." />
+  <meta name="keywords" content="보안, 파일매니저, 암호화, USB, 포터블" />
+  <meta name="author" content="SecureVault Team" />
+
+  <!-- 개발/프로덕션 환경별 보안 헤더 -->
+  <!-- 개발 모드: 개발 서버 통신 허용 -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self' ws://localhost:* http://localhost:* http://ipc.localhost tauri://localhost stream: http://stream.localhost; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; img-src 'self' data: blob: asset: http://asset.localhost stream: http://stream.localhost; media-src 'self' blob: asset: http://asset.localhost stream: http://stream.localhost;" />
+  <!-- 프로덕션에서는 Tauri 빌드 시 더 엄격한 CSP로 교체됨 -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-XSS-Protection" content="1; mode=block" />
+
+  %sveltekit.head%
+</head>
+
+<body data-sveltekit-preload-data="hover" class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+  <div style="display: contents">%sveltekit.body%</div>
+</body>
+
 </html>

@@ -2,8 +2,8 @@
   매우 간단한 폴더 생성 다이얼로그
   입력 필드 문제를 완전히 해결하기 위한 최소한의 구현
 -->
-<script>
-  import { createEventDispatcher } from 'svelte';
+<script lang="ts">
+  import { createEventDispatcher } from "svelte";
 
   // Props
   export let show = false;
@@ -12,7 +12,7 @@
   const dispatch = createEventDispatcher();
 
   // 상태 변수
-  let folderName = '';
+  let folderName = "";
 
   // 폴더명 유효성 검사
   $: isValid = folderName && folderName.trim().length > 0;
@@ -20,26 +20,29 @@
   // 폴더 생성 처리
   function handleCreate() {
     if (isValid) {
-      dispatch('folderCreated', { name: folderName.trim() });
+      dispatch("folderCreated", { name: folderName.trim() });
       // 폼 초기화
-      folderName = '';
+      folderName = "";
     }
   }
 
   // 다이얼로그 닫기
   function handleClose() {
-    dispatch('close');
+    dispatch("close");
     // 폼 초기화
-    folderName = '';
+    folderName = "";
   }
 
   // 다이얼로그가 열릴 때 포커스 설정
   $: if (show) {
-    folderName = '';
+    folderName = "새 폴더";
     setTimeout(() => {
-      const input = document.getElementById('simpleFolderName');
+      const input = document.getElementById(
+        "simpleFolderName",
+      ) as HTMLInputElement;
       if (input) {
         input.focus();
+        input.select();
       }
     }, 100);
   }
@@ -47,7 +50,7 @@
 
 {#if show}
   <!-- 매우 간단한 모달 오버레이 -->
-  <div 
+  <div
     style="
       position: fixed;
       top: 0;
@@ -63,7 +66,7 @@
     on:click={handleClose}
   >
     <!-- 모달 콘텐츠 -->
-    <div 
+    <div
       style="
         background: white;
         border-radius: 8px;
@@ -76,7 +79,7 @@
     >
       <div style="font-size: 3rem; margin-bottom: 1rem;">📂</div>
       <h2 style="margin: 0 0 1.5rem 0; color: #333;">새 폴더 생성</h2>
-      
+
       <!-- 폴더명 입력 -->
       <div style="margin-bottom: 1.5rem; text-align: left;">
         <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">

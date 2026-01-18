@@ -3,85 +3,153 @@
   C# MainForm의 TreeView 기능을 포팅
 -->
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-  import { fileManagerState, FileManagerService } from '$lib/stores/file-manager';
-  import type { FolderEntry } from '$lib/types/file-manager';
+  import { onMount, onDestroy } from "svelte";
+  import {
+    fileManagerState,
+    FileManagerService,
+  } from "$lib/stores/file-manager";
+  import type { FolderEntry } from "$lib/types/file-manager";
 
   // 반응형 상태
   const folderTree = $derived($fileManagerState.folderTree);
   const currentFolder = $derived($fileManagerState.currentFolder);
 
   // 확장된 폴더 상태 관리
-  let expandedFolders = $state(new Set<string>(['root']));
+  let expandedFolders = $state(new Set<string>(["root"]));
 
-  onMount(() => {
-    // 전역 드래그 방지 이벤트 리스너 추가
-    const preventDrag = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    const preventDragStart = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    const preventSelectStart = (e: Event) => {
-      const target = e.target as HTMLElement;
-      // HTMLElement인지 확인
-      if (target && typeof target.closest === 'function') {
-        // 폴더 트리 영역에서는 텍스트 선택 완전 방지
-        if (target.closest('.folder-tree')) {
-          e.preventDefault();
-          return false;
-        }
-      }
-    };
-    
-    // 드래그 관련 이벤트 완전 차단
-    document.addEventListener('dragstart', preventDragStart, true);
-    document.addEventListener('drag', preventDrag, true);
-    document.addEventListener('dragenter', preventDrag, true);
-    document.addEventListener('dragover', preventDrag, true);
-    document.addEventListener('dragleave', preventDrag, true);
-    document.addEventListener('drop', preventDrag, true);
-    document.addEventListener('dragend', preventDrag, true);
-    document.addEventListener('selectstart', preventSelectStart, true);
-  });
+  import { invoke } from "@tauri-apps/api/core";
+  import { addToast } from "$lib/stores/toast";
 
-  onDestroy(() => {
-    // 드래그 방지 이벤트 리스너 제거
-    const preventDrag = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    const preventDragStart = (e: DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      return false;
-    };
-    
-    const preventSelectStart = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('.folder-tree')) {
-        e.preventDefault();
-        return false;
+  // 드래그 앤 드롭 상태
+  let draggedFolderId: string | null = null;
+  let dragOverFolderId: string | null = null;
+
+  // 드래그 시작
+  function handleDragStart(event: DragEvent, folder: FolderEntry) {
+    if (!event.dataTransfer) return;
+
+    draggedFolderId = folder.id;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/securevault-folder", folder.id);
+    // 폴더 이름 설정 (선택적)
+    event.dataTransfer.setData("text/plain", folder.name);
+
+    // 드래그 이미지 설정 (반투명)
+    const target = event.target as HTMLElement;
+    target.style.opacity = "0.5";
+  }
+
+  // 드래그 종료
+  function handleDragEnd(event: DragEvent) {
+    const target = event.target as HTMLElement;
+    target.style.opacity = "";
+    draggedFolderId = null;
+    dragOverFolderId = null;
+  }
+
+  // 드래그 오버 (드롭 허용)
+  function handleDragOver(event: DragEvent, folder: FolderEntry) {
+    event.preventDefault(); // 드롭 허용
+
+    const types = event.dataTransfer?.types || [];
+    const isFolder = types.includes("application/securevault-folder");
+    const isFile = types.includes("application/securevault-file");
+
+    if (isFolder) {
+      if (draggedFolderId && draggedFolderId !== folder.id) {
+        dragOverFolderId = folder.id;
+        event.dataTransfer!.dropEffect = "move";
       }
-    };
-    
-    document.removeEventListener('dragstart', preventDragStart, true);
-    document.removeEventListener('drag', preventDrag, true);
-    document.removeEventListener('dragenter', preventDrag, true);
-    document.removeEventListener('dragover', preventDrag, true);
-    document.removeEventListener('dragleave', preventDrag, true);
-    document.removeEventListener('drop', preventDrag, true);
-    document.removeEventListener('dragend', preventDrag, true);
-    document.removeEventListener('selectstart', preventSelectStart, true);
-  });
+    } else if (isFile) {
+      dragOverFolderId = folder.id;
+      event.dataTransfer!.dropEffect = "move";
+    }
+  }
+
+  // 드래그 떠남
+  function handleDragLeave(event: DragEvent) {
+    // dragOverFolderId = null; // 깜빡임 방지를 위해 즉시 해제하지 않음
+  }
+
+  // 드롭 처리 (폴더 이동)
+  async function handleDrop(event: DragEvent, targetFolder: FolderEntry) {
+    event.preventDefault();
+    dragOverFolderId = null;
+
+    const sourceFolderId = event.dataTransfer?.getData(
+      "application/securevault-folder",
+    );
+    const sourceFileId = event.dataTransfer?.getData(
+      "application/securevault-file",
+    );
+
+    // 폴더 이동
+    if (sourceFolderId && sourceFolderId !== targetFolder.id) {
+      try {
+        console.log(`폴더 이동 요청: ${sourceFolderId} -> ${targetFolder.id}`);
+        await invoke("move_folder", {
+          folderId: sourceFolderId,
+          targetFolderId: targetFolder.id,
+        });
+        addToast({ type: "success", message: "폴더가 이동되었습니다." });
+        await FileManagerService.refresh();
+      } catch (error) {
+        console.error("폴더 이동 실패:", error);
+        addToast({ type: "error", message: `폴더 이동 실패: ${error}` });
+      }
+      return;
+    }
+
+    // 파일 이동
+    if (sourceFileId) {
+      try {
+        console.log(`파일 이동 요청: ${sourceFileId} -> ${targetFolder.id}`);
+        await invoke("move_file", {
+          fileId: sourceFileId,
+          targetFolderId: targetFolder.id,
+        });
+        addToast({ type: "success", message: "파일이 이동되었습니다." });
+        await FileManagerService.refresh();
+      } catch (error) {
+        console.error("파일 이동 실패:", error);
+        addToast({ type: "error", message: `파일 이동 실패: ${error}` });
+      }
+      return;
+    }
+  }
+
+  // 루트로 드롭 처리
+  async function handleDropToRoot(event: DragEvent) {
+    event.preventDefault();
+    dragOverFolderId = null;
+
+    const sourceFolderId = event.dataTransfer?.getData(
+      "application/securevault-folder",
+    );
+    if (!sourceFolderId) return;
+
+    try {
+      console.log(`폴더 이동 요청: ${sourceFolderId} -> Root`);
+
+      await invoke("move_folder", {
+        folderId: sourceFolderId,
+        targetFolderId: null, // Root
+      });
+
+      addToast({
+        type: "success",
+        message: "폴더가 루트로 이동되었습니다.",
+      });
+
+      await FileManagerService.refresh();
+    } catch (error) {
+      console.error("폴더 이동 실패:", error);
+      addToast({
+        type: "error",
+        message: `폴더 이동 실패: ${error}`,
+      });
+    }
+  }
 
   // 폴더 확장/축소 토글
   function toggleFolder(folderId: string) {
@@ -104,7 +172,7 @@
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       const multiSelect = event.shiftKey;
-      FileManagerService.selectItem(folderId, 'folder', multiSelect);
+      FileManagerService.selectItem(folderId, "folder", multiSelect);
     } else {
       // 일반 클릭은 네비게이션
       selectFolder(folderId);
@@ -116,7 +184,7 @@
     event.preventDefault();
     event.stopPropagation();
     const multiSelect = event.ctrlKey || event.metaKey || event.shiftKey;
-    FileManagerService.selectItem(folderId, 'folder', multiSelect);
+    FileManagerService.selectItem(folderId, "folder", multiSelect);
   }
 
   // 폴더가 현재 선택된 폴더인지 확인
@@ -135,14 +203,14 @@
 
   // 폴더 아이콘 가져오기
   function getFolderIcon(isExpanded: boolean) {
-    return isExpanded ? '📂' : '📁';
+    return isExpanded ? "📂" : "📁";
   }
 
   // 폴더 컨텍스트 메뉴 처리 (우클릭) - 현재 비활성화
   function handleFolderContextMenu(event: MouseEvent, folderId: string) {
     event.preventDefault();
     // 컨텍스트 메뉴 기능 비활성화 - 툴바 삭제 버튼 사용
-    console.log('폴더 우클릭:', folderId, '- 컨텍스트 메뉴 비활성화됨');
+    console.log("폴더 우클릭:", folderId, "- 컨텍스트 메뉴 비활성화됨");
   }
 
   // 재귀적으로 폴더 렌더링
@@ -150,14 +218,14 @@
     const isExpanded = expandedFolders.has(folder.id);
     const isCurrent = isCurrentFolder(folder.id);
     const isSelected = isFolderSelected(folder.id);
-    
+
     return {
       folder,
       level,
       isExpanded,
       isCurrent,
       isSelected,
-      hasChildren: folder.children && folder.children.length > 0
+      hasChildren: folder.children && folder.children.length > 0,
     };
   }
 </script>
@@ -165,7 +233,11 @@
 <!-- 폴더 트리 -->
 <div class="folder-tree">
   <!-- 루트 폴더 -->
-  <div class="folder-item no-drag {isCurrentFolder(null) ? 'current' : ''}" style="padding-left: 12px" draggable="false">
+  <div
+    class="folder-item no-drag {isCurrentFolder(null) ? 'current' : ''}"
+    style="padding-left: 12px"
+    draggable="false"
+  >
     <div class="folder-content no-drag">
       <div class="expand-spacer"></div>
       <button
@@ -190,10 +262,12 @@
     <div class="folder-list">
       {#each folderTree as folder}
         {@const rendered = renderFolder(folder, 1)}
-        
+
         <!-- 폴더 아이템 -->
-        <div 
-          class="folder-item no-drag {rendered.isCurrent ? 'current' : ''} {rendered.isSelected ? 'selected' : ''}"
+        <div
+          class="folder-item no-drag {rendered.isCurrent
+            ? 'current'
+            : ''} {rendered.isSelected ? 'selected' : ''}"
           style="padding-left: {rendered.level * 20 + 12}px"
           draggable="false"
         >
@@ -203,9 +277,12 @@
               class="folder-select-button no-drag"
               onclick={(e) => handleFolderSelect(e, folder.id)}
               title="폴더 선택"
-              draggable="false"
             >
-              <span class="select-indicator no-drag {rendered.isSelected ? 'selected' : ''}">
+              <span
+                class="select-indicator no-drag {rendered.isSelected
+                  ? 'selected'
+                  : ''}"
+              >
                 {#if rendered.isSelected}✓{:else}○{/if}
               </span>
             </button>
@@ -215,17 +292,22 @@
               <button
                 class="expand-button no-drag"
                 onclick={() => toggleFolder(folder.id)}
-                title={rendered.isExpanded ? '축소' : '확장'}
-                draggable="false"
+                title={rendered.isExpanded ? "축소" : "확장"}
               >
-                <svg 
-                  class="w-3 h-3 transition-transform no-drag {rendered.isExpanded ? 'rotate-90' : ''}"
-                  fill="none" 
-                  stroke="currentColor" 
+                <svg
+                  class="w-3 h-3 transition-transform no-drag {rendered.isExpanded
+                    ? 'rotate-90'
+                    : ''}"
+                  fill="none"
+                  stroke="currentColor"
                   viewBox="0 0 24 24"
-                  draggable="false"
                 >
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 5l7 7-7 7"
+                  />
                 </svg>
               </button>
             {:else}
@@ -254,10 +336,15 @@
         <!-- 하위 폴더들 (재귀) -->
         {#if rendered.isExpanded && folder.children}
           {#each folder.children as childFolder}
-            {@const childRendered = renderFolder(childFolder, rendered.level + 1)}
-            
-            <div 
-              class="folder-item no-drag {childRendered.isCurrent ? 'current' : ''} {childRendered.isSelected ? 'selected' : ''}"
+            {@const childRendered = renderFolder(
+              childFolder,
+              rendered.level + 1,
+            )}
+
+            <div
+              class="folder-item no-drag {childRendered.isCurrent
+                ? 'current'
+                : ''} {childRendered.isSelected ? 'selected' : ''}"
               style="padding-left: {childRendered.level * 20 + 12}px"
               draggable="false"
             >
@@ -269,7 +356,11 @@
                   title="폴더 선택"
                   draggable="false"
                 >
-                  <span class="select-indicator no-drag {childRendered.isSelected ? 'selected' : ''}">
+                  <span
+                    class="select-indicator no-drag {childRendered.isSelected
+                      ? 'selected'
+                      : ''}"
+                  >
                     {#if childRendered.isSelected}✓{:else}○{/if}
                   </span>
                 </button>
@@ -279,15 +370,22 @@
                   <button
                     class="expand-button"
                     onclick={() => toggleFolder(childFolder.id)}
-                    title={childRendered.isExpanded ? '축소' : '확장'}
+                    title={childRendered.isExpanded ? "축소" : "확장"}
                   >
-                    <svg 
-                      class="w-3 h-3 transition-transform {childRendered.isExpanded ? 'rotate-90' : ''}"
-                      fill="none" 
-                      stroke="currentColor" 
+                    <svg
+                      class="w-3 h-3 transition-transform {childRendered.isExpanded
+                        ? 'rotate-90'
+                        : ''}"
+                      fill="none"
+                      stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M9 5l7 7-7 7"
+                      />
                     </svg>
                   </button>
                 {:else}
@@ -298,13 +396,15 @@
                 <button
                   class="folder-button"
                   onclick={(e) => handleFolderClick(e, childFolder.id)}
-                  oncontextmenu={(e) => handleFolderContextMenu(e, childFolder.id)}
+                  oncontextmenu={(e) =>
+                    handleFolderContextMenu(e, childFolder.id)}
                   title="{childFolder.path} (Ctrl+클릭: 선택)"
                 >
                   <span class="folder-icon">
                     {getFolderIcon(childRendered.isExpanded)}
                   </span>
-                  <span class="folder-name text-korean">{childFolder.name}</span>
+                  <span class="folder-name text-korean">{childFolder.name}</span
+                  >
                   {#if childFolder.file_count > 0}
                     <span class="file-count">({childFolder.file_count})</span>
                   {/if}
@@ -492,11 +592,11 @@
     .folder-content {
       margin: 0 0.25rem;
     }
-    
+
     .folder-name {
       font-size: 0.8125rem;
     }
-    
+
     .file-count {
       font-size: 0.6875rem;
     }

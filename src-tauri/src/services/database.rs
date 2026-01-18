@@ -1,13 +1,9 @@
-use crate::models::{
-    file::FileEntry,
-    folder::FolderEntry,
-    error::VaultError,
-};
-use rusqlite::{Connection, Result as SqliteResult, params, Row};
+use crate::models::{error::VaultError, file::FileEntry, folder::FolderEntry};
+use chrono::{DateTime, Utc};
+use rusqlite::{params, Connection, Result as SqliteResult, Row};
+use serde_json;
 use std::path::Path;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use serde_json;
 
 /// 데이터베이스 서비스
 /// SQLite 기반 메타데이터 데이터베이스를 관리합니다.
@@ -40,11 +36,16 @@ impl DatabaseService {
         }
     }
 
+    /// 데이터베이스가 초기화되었는지(연결이 유효한지) 확인합니다.
+    pub fn is_initialized(&self) -> bool {
+        self.connection.is_some()
+    }
+
     /// 데이터베이스를 초기화합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `vault_path` - 볼트 경로
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 초기화 결과
     pub fn initialize(&mut self, vault_path: &str) -> Result<(), VaultError> {
@@ -64,7 +65,7 @@ impl DatabaseService {
 
         // 스키마 생성
         self.create_schema(&conn)?;
-        
+
         // 스키마 마이그레이션 실행
         self.migrate_schema(&conn)?;
 
@@ -110,7 +111,8 @@ impl DatabaseService {
             )
             "#,
             [],
-        ).map_err(|e| VaultError::DatabaseError(format!("파일 테이블 생성 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("파일 테이블 생성 실패: {}", e)))?;
 
         // 폴더 테이블 (C# FolderEntry 포팅)
         conn.execute(
@@ -131,7 +133,8 @@ impl DatabaseService {
             )
             "#,
             [],
-        ).map_err(|e| VaultError::DatabaseError(format!("폴더 테이블 생성 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 테이블 생성 실패: {}", e)))?;
 
         // 볼트 설정 테이블 (C# VaultConfig 포팅)
         conn.execute(
@@ -144,20 +147,33 @@ impl DatabaseService {
             )
             "#,
             [],
-        ).map_err(|e| VaultError::DatabaseError(format!("설정 테이블 생성 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("설정 테이블 생성 실패: {}", e)))?;
 
         // 인덱스 생성 (성능 최적화)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_files_folder_id ON files(folder_id)", [])
-            .map_err(|e| VaultError::DatabaseError(format!("파일 폴더 인덱스 생성 실패: {}", e)))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_folder_id ON files(folder_id)",
+            [],
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("파일 폴더 인덱스 생성 실패: {}", e)))?;
 
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(is_deleted)", [])
-            .map_err(|e| VaultError::DatabaseError(format!("파일 삭제 인덱스 생성 실패: {}", e)))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_files_deleted ON files(is_deleted)",
+            [],
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("파일 삭제 인덱스 생성 실패: {}", e)))?;
 
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)", [])
-            .map_err(|e| VaultError::DatabaseError(format!("폴더 부모 인덱스 생성 실패: {}", e)))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)",
+            [],
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 부모 인덱스 생성 실패: {}", e)))?;
 
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_folders_path ON folders(path)", [])
-            .map_err(|e| VaultError::DatabaseError(format!("폴더 경로 인덱스 생성 실패: {}", e)))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_folders_path ON folders(path)",
+            [],
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 경로 인덱스 생성 실패: {}", e)))?;
 
         log::info!("데이터베이스 스키마 생성 완료");
         Ok(())
@@ -168,21 +184,21 @@ impl DatabaseService {
     fn migrate_schema(&self, conn: &Connection) -> Result<(), VaultError> {
         // 현재 스키마 버전 확인
         let schema_version = self.get_schema_version(conn)?;
-        
+
         log::info!("현재 스키마 버전: {}", schema_version);
-        
+
         // 버전별 마이그레이션 실행
         if schema_version < 1 {
             self.migrate_to_version_1(conn)?;
         }
-        
+
         // 최신 버전으로 업데이트
         self.set_schema_version(conn, 1)?;
-        
+
         log::info!("데이터베이스 마이그레이션 완료");
         Ok(())
     }
-    
+
     /// 스키마 버전을 조회합니다.
     fn get_schema_version(&self, conn: &Connection) -> Result<i32, VaultError> {
         // vault_config 테이블에서 schema_version 조회
@@ -192,9 +208,9 @@ impl DatabaseService {
             |row| {
                 let version_str: String = row.get(0)?;
                 Ok(version_str.parse::<i32>().unwrap_or(0))
-            }
+            },
         );
-        
+
         match version_result {
             Ok(version) => Ok(version),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0), // 새 데이터베이스
@@ -203,79 +219,98 @@ impl DatabaseService {
                 if e.to_string().contains("no such table") {
                     Ok(0)
                 } else {
-                    Err(VaultError::DatabaseError(format!("스키마 버전 조회 실패: {}", e)))
+                    Err(VaultError::DatabaseError(format!(
+                        "스키마 버전 조회 실패: {}",
+                        e
+                    )))
                 }
             }
         }
     }
-    
+
     /// 스키마 버전을 설정합니다.
     fn set_schema_version(&self, conn: &Connection, version: i32) -> Result<(), VaultError> {
         let now = Utc::now().to_rfc3339();
-        
+
         conn.execute(
             r#"
             INSERT OR REPLACE INTO vault_config (key, value, created_date, modified_date)
             VALUES ('schema_version', ?1, ?2, ?3)
             "#,
             params![version.to_string(), now, now],
-        ).map_err(|e| VaultError::DatabaseError(format!("스키마 버전 설정 실패: {}", e)))?;
-        
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("스키마 버전 설정 실패: {}", e)))?;
+
         Ok(())
     }
-    
+
     /// 버전 1로 마이그레이션: is_compressed 관련 컬럼 추가
     fn migrate_to_version_1(&self, conn: &Connection) -> Result<(), VaultError> {
         log::info!("스키마 버전 1로 마이그레이션 시작");
-        
+
         // files 테이블에 압축 관련 컬럼이 있는지 확인
-        let has_compressed_column = conn.prepare("SELECT is_compressed FROM files LIMIT 1").is_ok();
-        
+        let has_compressed_column = conn
+            .prepare("SELECT is_compressed FROM files LIMIT 1")
+            .is_ok();
+
         if !has_compressed_column {
             log::info!("files 테이블에 압축 관련 컬럼 추가");
-            
+
             // is_compressed 컬럼 추가
             conn.execute(
                 "ALTER TABLE files ADD COLUMN is_compressed INTEGER DEFAULT 0",
                 [],
-            ).map_err(|e| VaultError::DatabaseError(format!("is_compressed 컬럼 추가 실패: {}", e)))?;
-            
+            )
+            .map_err(|e| {
+                VaultError::DatabaseError(format!("is_compressed 컬럼 추가 실패: {}", e))
+            })?;
+
             // compressed_size 컬럼 추가
             conn.execute(
                 "ALTER TABLE files ADD COLUMN compressed_size INTEGER DEFAULT 0",
                 [],
-            ).map_err(|e| VaultError::DatabaseError(format!("compressed_size 컬럼 추가 실패: {}", e)))?;
-            
+            )
+            .map_err(|e| {
+                VaultError::DatabaseError(format!("compressed_size 컬럼 추가 실패: {}", e))
+            })?;
+
             // compression_ratio 컬럼 추가
             conn.execute(
                 "ALTER TABLE files ADD COLUMN compression_ratio REAL DEFAULT 1.0",
                 [],
-            ).map_err(|e| VaultError::DatabaseError(format!("compression_ratio 컬럼 추가 실패: {}", e)))?;
-            
+            )
+            .map_err(|e| {
+                VaultError::DatabaseError(format!("compression_ratio 컬럼 추가 실패: {}", e))
+            })?;
+
             // 기존 파일들의 compressed_size를 encrypted_size와 동일하게 설정
             conn.execute(
                 "UPDATE files SET compressed_size = encrypted_size WHERE compressed_size = 0",
                 [],
-            ).map_err(|e| VaultError::DatabaseError(format!("기존 파일 압축 크기 업데이트 실패: {}", e)))?;
-            
+            )
+            .map_err(|e| {
+                VaultError::DatabaseError(format!("기존 파일 압축 크기 업데이트 실패: {}", e))
+            })?;
+
             log::info!("압축 관련 컬럼 추가 완료");
         } else {
             log::info!("압축 관련 컬럼이 이미 존재함");
         }
-        
+
         Ok(())
     }
 
     /// 파일 메타데이터를 추가합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_entry` - 파일 엔트리
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 추가 결과
     pub fn add_file(&self, file_entry: &FileEntry) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let tags_json = serde_json::to_string(&file_entry.tags)
             .map_err(|e| VaultError::DatabaseError(format!("태그 직렬화 실패: {}", e)))?;
@@ -324,26 +359,112 @@ impl DatabaseService {
                 file_entry.access_count as i32,
                 file_entry.security_level as i32
             ],
-        ).map_err(|e| VaultError::DatabaseError(format!("파일 추가 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("파일 추가 실패: {}", e)))?;
 
         log::info!("파일 메타데이터 추가 완료: {}", file_entry.file_name);
         Ok(())
     }
 
+    /// 파일 메타데이터 여러 개를 일괄 추가합니다 (트랜잭션 사용, 성능 최적화).
+    ///
+    /// # 매개변수
+    /// * `file_entries` - 추가할 파일 엔트리 리스트
+    ///
+    /// # 반환값
+    /// * `Result<(), VaultError>` - 추가 결과
+    pub fn add_files_batch(&mut self, file_entries: &[FileEntry]) -> Result<(), VaultError> {
+        let conn = self.connection.as_mut().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
+
+        // 트랜잭션 시작
+        let tx = conn
+            .transaction()
+            .map_err(|e| VaultError::DatabaseError(format!("트랜잭션 시작 실패: {}", e)))?;
+
+        {
+            let mut stmt = tx
+                .prepare(
+                    r#"
+                    INSERT INTO files (
+                        id, file_name, original_file_name, file_size, file_extension,
+                        mime_type, checksum, created_date, modified_date, last_access_date,
+                        folder_id, encrypted_file_name, encrypted_size, is_compressed,
+                        compressed_size, compression_ratio, tags, description,
+                        version, is_favorite, is_deleted, deleted_date, custom_properties,
+                        access_count, security_level
+                    ) VALUES (
+                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                        ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
+                    )
+                    "#,
+                )
+                .map_err(|e| VaultError::DatabaseError(format!("배치 쿼리 준비 실패: {}", e)))?;
+
+            for file_entry in file_entries {
+                let tags_json = serde_json::to_string(&file_entry.tags)
+                    .map_err(|e| VaultError::DatabaseError(format!("태그 직렬화 실패: {}", e)))?;
+
+                let custom_properties_json = serde_json::to_string(&file_entry.custom_properties)
+                    .map_err(|e| {
+                    VaultError::DatabaseError(format!("사용자 속성 직렬화 실패: {}", e))
+                })?;
+
+                stmt.execute(params![
+                    file_entry.id.to_string(),
+                    file_entry.file_name,
+                    file_entry.original_file_name,
+                    file_entry.file_size as i64,
+                    file_entry.file_extension,
+                    file_entry.mime_type,
+                    file_entry.checksum,
+                    file_entry.created_date.to_rfc3339(),
+                    file_entry.modified_date.to_rfc3339(),
+                    file_entry.last_access_date.to_rfc3339(),
+                    file_entry.folder_id.map(|id| id.to_string()),
+                    file_entry.encrypted_file_name,
+                    file_entry.encrypted_size as i64,
+                    if file_entry.is_compressed { 1 } else { 0 },
+                    file_entry.compressed_size as i64,
+                    file_entry.compression_ratio,
+                    tags_json,
+                    file_entry.description,
+                    file_entry.version as i32,
+                    if file_entry.is_favorite { 1 } else { 0 },
+                    if file_entry.is_deleted { 1 } else { 0 },
+                    file_entry.deleted_date.map(|d| d.to_rfc3339()),
+                    custom_properties_json,
+                    file_entry.access_count as i32,
+                    file_entry.security_level as i32
+                ])
+                .map_err(|e| VaultError::DatabaseError(format!("파일 배포 추가 실패: {}", e)))?;
+            }
+        }
+
+        // 트랜잭션 커밋
+        tx.commit()
+            .map_err(|e| VaultError::DatabaseError(format!("트랜잭션 커밋 실패: {}", e)))?;
+
+        log::info!("파일 배치 추가 완료: {}개", file_entries.len());
+        Ok(())
+    }
+
     /// 파일 메타데이터를 조회합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_id` - 파일 ID
-    /// 
+    ///
     /// # 반환값
     /// * `Result<Option<FileEntry>, VaultError>` - 파일 엔트리
     pub fn get_file(&self, file_id: &Uuid) -> Result<Option<FileEntry>, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM files WHERE id = ?1 AND is_deleted = 0"
-        ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM files WHERE id = ?1 AND is_deleted = 0")
+            .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
         let file_result = stmt.query_row(params![file_id.to_string()], |row| {
             self.row_to_file_entry(row)
@@ -357,35 +478,42 @@ impl DatabaseService {
     }
 
     /// 파일 메타데이터를 조회합니다 (문자열 ID 버전).
-    /// 
+    ///
     /// # 매개변수
     /// * `file_id` - 파일 ID (문자열)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<Option<FileEntry>, VaultError>` - 파일 엔트리
     pub fn get_file_metadata(&self, file_id: &str) -> Result<Option<FileEntry>, VaultError> {
         let uuid = Uuid::parse_str(file_id)
             .map_err(|_| VaultError::DatabaseError("잘못된 파일 ID 형식입니다.".to_string()))?;
-        
+
         self.get_file(&uuid)
     }
 
     /// 폴더의 파일 목록을 조회합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID (None이면 루트)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<Vec<FileEntry>, VaultError>` - 파일 목록
-    pub fn get_files_by_folder(&self, folder_id: Option<Uuid>) -> Result<Vec<FileEntry>, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+    pub fn get_files_by_folder(
+        &self,
+        folder_id: Option<Uuid>,
+    ) -> Result<Vec<FileEntry>, VaultError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         if let Some(folder_id) = folder_id {
             let mut stmt = conn.prepare("SELECT * FROM files WHERE folder_id = ?1 AND is_deleted = 0 ORDER BY file_name")
                 .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
-            
-            let file_iter = stmt.query_map(params![folder_id.to_string()], |row| self.row_to_file_entry(row))
+
+            let file_iter = stmt
+                .query_map(params![folder_id.to_string()], |row| {
+                    self.row_to_file_entry(row)
+                })
                 .map_err(|e| VaultError::DatabaseError(format!("파일 목록 조회 실패: {}", e)))?;
 
             let mut files = Vec::new();
@@ -399,8 +527,9 @@ impl DatabaseService {
         } else {
             let mut stmt = conn.prepare("SELECT * FROM files WHERE folder_id IS NULL AND is_deleted = 0 ORDER BY file_name")
                 .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
-            
-            let file_iter = stmt.query_map([], |row| self.row_to_file_entry(row))
+
+            let file_iter = stmt
+                .query_map([], |row| self.row_to_file_entry(row))
                 .map_err(|e| VaultError::DatabaseError(format!("파일 목록 조회 실패: {}", e)))?;
 
             let mut files = Vec::new();
@@ -415,35 +544,38 @@ impl DatabaseService {
     }
 
     /// 파일 메타데이터를 삭제합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_id` - 파일 ID
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 삭제 결과
     pub fn remove_file(&self, file_id: &Uuid) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         conn.execute(
             "DELETE FROM files WHERE id = ?1",
             params![file_id.to_string()],
-        ).map_err(|e| VaultError::DatabaseError(format!("파일 삭제 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("파일 삭제 실패: {}", e)))?;
 
         log::info!("파일 메타데이터 삭제 완료: {}", file_id);
         Ok(())
     }
 
     /// 폴더를 추가합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_entry` - 폴더 엔트리
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 추가 결과
     pub fn add_folder(&self, folder_entry: &FolderEntry) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let child_folder_ids_json = serde_json::to_string(&folder_entry.child_folder_ids)
             .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 ID 직렬화 실패: {}", e)))?;
@@ -475,26 +607,28 @@ impl DatabaseService {
                 child_folder_ids_json,
                 file_ids_json
             ],
-        ).map_err(|e| VaultError::DatabaseError(format!("폴더 추가 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 추가 실패: {}", e)))?;
 
         log::info!("폴더 추가 완료: {}", folder_entry.name);
         Ok(())
     }
 
     /// 폴더를 조회합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID
-    /// 
+    ///
     /// # 반환값
     /// * `Result<Option<FolderEntry>, VaultError>` - 폴더 엔트리
     pub fn get_folder(&self, folder_id: &Uuid) -> Result<Option<FolderEntry>, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
-        let mut stmt = conn.prepare(
-            "SELECT * FROM folders WHERE id = ?1"
-        ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT * FROM folders WHERE id = ?1")
+            .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
         let folder_result = stmt.query_row(params![folder_id.to_string()], |row| {
             self.row_to_folder_entry(row)
@@ -508,17 +642,20 @@ impl DatabaseService {
     }
 
     /// 모든 폴더를 조회합니다 (실시간 파일 개수 및 용량 포함).
-    /// 
+    ///
     /// # 반환값
     /// * `Result<Vec<FolderEntry>, VaultError>` - 폴더 목록
     pub fn get_all_folders(&self) -> Result<Vec<FolderEntry>, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
-        let mut stmt = conn.prepare("SELECT * FROM folders ORDER BY path")
+        let mut stmt = conn
+            .prepare("SELECT * FROM folders ORDER BY path")
             .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
-        let folder_iter = stmt.query_map([], |row| self.row_to_folder_entry(row))
+        let folder_iter = stmt
+            .query_map([], |row| self.row_to_folder_entry(row))
             .map_err(|e| VaultError::DatabaseError(format!("폴더 목록 조회 실패: {}", e)))?;
 
         let mut folders = Vec::new();
@@ -528,17 +665,17 @@ impl DatabaseService {
                     // 실시간 파일 개수 계산
                     let file_count = self.count_files_in_folder(Some(folder_entry.id))?;
                     folder_entry.file_count = file_count as u32;
-                    
+
                     // 실시간 폴더 총 용량 계산
                     let total_size = self.calculate_folder_size(Some(folder_entry.id))?;
                     folder_entry.total_size = total_size as u64;
-                    
+
                     // 하위 폴더 개수도 실시간 계산
                     let subfolder_count = self.count_subfolders(Some(folder_entry.id))?;
                     folder_entry.subfolder_count = subfolder_count as u32;
-                    
+
                     folders.push(folder_entry);
-                },
+                }
                 Err(e) => log::warn!("폴더 엔트리 변환 실패: {}", e),
             }
         }
@@ -547,35 +684,38 @@ impl DatabaseService {
     }
 
     /// 폴더를 삭제합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 삭제 결과
     pub fn remove_folder(&self, folder_id: &Uuid) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         conn.execute(
             "DELETE FROM folders WHERE id = ?1",
             params![folder_id.to_string()],
-        ).map_err(|e| VaultError::DatabaseError(format!("폴더 삭제 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 삭제 실패: {}", e)))?;
 
         log::info!("폴더 삭제 완료: {}", folder_id);
         Ok(())
     }
 
     /// 파일 메타데이터를 업데이트합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `file_entry` - 파일 엔트리
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 업데이트 결과
     pub fn update_file(&self, file_entry: &FileEntry) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let tags_json = serde_json::to_string(&file_entry.tags)
             .map_err(|e| VaultError::DatabaseError(format!("태그 직렬화 실패: {}", e)))?;
@@ -627,15 +767,16 @@ impl DatabaseService {
     }
 
     /// 폴더를 업데이트합니다.
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_entry` - 폴더 엔트리
-    /// 
+    ///
     /// # 반환값
     /// * `Result<(), VaultError>` - 업데이트 결과
     pub fn update_folder(&self, folder_entry: &FolderEntry) -> Result<(), VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let child_folder_ids_json = serde_json::to_string(&folder_entry.child_folder_ids)
             .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 ID 직렬화 실패: {}", e)))?;
@@ -664,7 +805,8 @@ impl DatabaseService {
                 child_folder_ids_json,
                 file_ids_json
             ],
-        ).map_err(|e| VaultError::DatabaseError(format!("폴더 업데이트 실패: {}", e)))?;
+        )
+        .map_err(|e| VaultError::DatabaseError(format!("폴더 업데이트 실패: {}", e)))?;
 
         log::info!("폴더 업데이트 완료: {}", folder_entry.name);
         Ok(())
@@ -682,7 +824,11 @@ impl DatabaseService {
         let folder_id = folder_id_str.and_then(|s| Uuid::parse_str(&s).ok());
 
         let deleted_date_str: Option<String> = row.get("deleted_date")?;
-        let deleted_date = deleted_date_str.and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Utc)));
+        let deleted_date = deleted_date_str.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .ok()
+                .map(|dt| dt.with_timezone(&Utc))
+        });
 
         Ok(FileEntry {
             id: Uuid::parse_str(&row.get::<_, String>("id")?).unwrap(),
@@ -692,9 +838,17 @@ impl DatabaseService {
             file_extension: row.get("file_extension")?,
             mime_type: row.get("mime_type")?,
             checksum: row.get("checksum")?,
-            created_date: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_date")?).unwrap().with_timezone(&Utc),
-            modified_date: DateTime::parse_from_rfc3339(&row.get::<_, String>("modified_date")?).unwrap().with_timezone(&Utc),
-            last_access_date: DateTime::parse_from_rfc3339(&row.get::<_, String>("last_access_date")?).unwrap().with_timezone(&Utc),
+            created_date: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_date")?)
+                .unwrap()
+                .with_timezone(&Utc),
+            modified_date: DateTime::parse_from_rfc3339(&row.get::<_, String>("modified_date")?)
+                .unwrap()
+                .with_timezone(&Utc),
+            last_access_date: DateTime::parse_from_rfc3339(
+                &row.get::<_, String>("last_access_date")?,
+            )
+            .unwrap()
+            .with_timezone(&Utc),
             folder_id,
             encrypted_file_name: row.get("encrypted_file_name")?,
             encrypted_size: row.get::<_, i64>("encrypted_size")? as u64,
@@ -709,7 +863,9 @@ impl DatabaseService {
             deleted_date,
             custom_properties,
             access_count: row.get::<_, i32>("access_count")? as u32,
-            security_level: crate::models::file::FileSecurityLevel::from(row.get::<_, i32>("security_level")?),
+            security_level: crate::models::file::FileSecurityLevel::from(
+                row.get::<_, i32>("security_level")?,
+            ),
         })
     }
 
@@ -729,8 +885,12 @@ impl DatabaseService {
             name: row.get("name")?,
             parent_id,
             path: row.get("path")?,
-            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?).unwrap().with_timezone(&Utc),
-            modified_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("modified_at")?).unwrap().with_timezone(&Utc),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("created_at")?)
+                .unwrap()
+                .with_timezone(&Utc),
+            modified_at: DateTime::parse_from_rfc3339(&row.get::<_, String>("modified_at")?)
+                .unwrap()
+                .with_timezone(&Utc),
             status: crate::models::folder::FolderStatus::from(row.get::<_, i32>("status")?),
             subfolder_count: row.get::<_, i32>("subfolder_count")? as u32,
             file_count: row.get::<_, i32>("file_count")? as u32,
@@ -741,16 +901,66 @@ impl DatabaseService {
         })
     }
 
+    /// 파일을 검색합니다.
+    pub fn search_files(&self, query: &str) -> Result<Vec<FileEntry>, VaultError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
+
+        let pattern = format!("%{}%", query);
+        // SQLite LIKE는 기본적으로 대소문자를 구분하지 않음 (ASCII 범위)
+        let mut stmt = conn.prepare(
+            "SELECT * FROM files WHERE (file_name LIKE ?1 OR original_file_name LIKE ?1) AND is_deleted = 0 ORDER BY file_name"
+        ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+
+        let file_iter = stmt
+            .query_map(params![pattern], |row| self.row_to_file_entry(row))
+            .map_err(|e| VaultError::DatabaseError(format!("검색 실패: {}", e)))?;
+
+        let mut files = Vec::new();
+        for file in file_iter {
+            if let Ok(f) = file {
+                files.push(f);
+            }
+        }
+        Ok(files)
+    }
+
+    /// 폴더를 검색합니다.
+    pub fn search_folders(&self, query: &str) -> Result<Vec<FolderEntry>, VaultError> {
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
+
+        let pattern = format!("%{}%", query);
+        let mut stmt = conn
+            .prepare("SELECT * FROM folders WHERE name LIKE ?1 ORDER BY name")
+            .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+
+        let folder_iter = stmt
+            .query_map(params![pattern], |row| self.row_to_folder_entry(row))
+            .map_err(|e| VaultError::DatabaseError(format!("검색 실패: {}", e)))?;
+
+        let mut folders = Vec::new();
+        for folder in folder_iter {
+            if let Ok(f) = folder {
+                folders.push(f);
+            }
+        }
+        Ok(folders)
+    }
+
     /// 폴더의 총 크기를 계산합니다 (하위 폴더 포함)
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID (None이면 루트)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<u64, VaultError>` - 총 크기 (바이트)
     pub fn calculate_folder_size(&self, folder_id: Option<Uuid>) -> Result<u64, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         // 재귀적으로 폴더와 하위 폴더의 파일 크기 합계 계산
         let mut total_size = 0u64;
@@ -761,23 +971,25 @@ impl DatabaseService {
             "SELECT COALESCE(SUM(file_size), 0) as total_size FROM files WHERE folder_id = ?1 AND is_deleted = 0"
         ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
-        let size: i64 = stmt.query_row(params![folder_id_str], |row| {
-            Ok(row.get("total_size")?)
-        }).map_err(|e| VaultError::DatabaseError(format!("폴더 크기 계산 실패: {}", e)))?;
+        let size: i64 = stmt
+            .query_row(params![folder_id_str], |row| Ok(row.get("total_size")?))
+            .map_err(|e| VaultError::DatabaseError(format!("폴더 크기 계산 실패: {}", e)))?;
 
         total_size += size as u64;
 
         // 하위 폴더들의 크기도 재귀적으로 계산
-        let mut stmt = conn.prepare(
-            "SELECT id FROM folders WHERE parent_id = ?1"
-        ).map_err(|e| VaultError::DatabaseError(format!("하위 폴더 쿼리 준비 실패: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM folders WHERE parent_id = ?1")
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 쿼리 준비 실패: {}", e)))?;
 
-        let subfolder_ids: Vec<Uuid> = stmt.query_map(params![folder_id_str], |row| {
-            let id_str: String = row.get("id")?;
-            Ok(Uuid::parse_str(&id_str).unwrap())
-        }).map_err(|e| VaultError::DatabaseError(format!("하위 폴더 조회 실패: {}", e)))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 수집 실패: {}", e)))?;
+        let subfolder_ids: Vec<Uuid> = stmt
+            .query_map(params![folder_id_str], |row| {
+                let id_str: String = row.get("id")?;
+                Ok(Uuid::parse_str(&id_str).unwrap())
+            })
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 조회 실패: {}", e)))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 수집 실패: {}", e)))?;
 
         // 각 하위 폴더의 크기를 재귀적으로 계산
         for subfolder_id in subfolder_ids {
@@ -789,38 +1001,43 @@ impl DatabaseService {
     }
 
     /// 폴더 내 파일 개수를 계산합니다 (하위 폴더 포함)
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID (None이면 루트)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<u32, VaultError>` - 파일 개수
     pub fn count_files_in_folder(&self, folder_id: Option<Uuid>) -> Result<u32, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let folder_id_str = folder_id.map(|id| id.to_string());
-        
-        // 현재 폴더의 파일 개수
-        let mut stmt = conn.prepare(
-            "SELECT COUNT(*) as file_count FROM files WHERE folder_id = ?1 AND is_deleted = 0"
-        ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
-        let mut file_count: i32 = stmt.query_row(params![folder_id_str], |row| {
-            Ok(row.get("file_count")?)
-        }).map_err(|e| VaultError::DatabaseError(format!("파일 개수 계산 실패: {}", e)))?;
+        // 현재 폴더의 파일 개수
+        let mut stmt = conn
+            .prepare(
+                "SELECT COUNT(*) as file_count FROM files WHERE folder_id = ?1 AND is_deleted = 0",
+            )
+            .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+
+        let mut file_count: i32 = stmt
+            .query_row(params![folder_id_str], |row| Ok(row.get("file_count")?))
+            .map_err(|e| VaultError::DatabaseError(format!("파일 개수 계산 실패: {}", e)))?;
 
         // 하위 폴더들의 파일 개수도 재귀적으로 계산
-        let mut stmt = conn.prepare(
-            "SELECT id FROM folders WHERE parent_id = ?1"
-        ).map_err(|e| VaultError::DatabaseError(format!("하위 폴더 쿼리 준비 실패: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM folders WHERE parent_id = ?1")
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 쿼리 준비 실패: {}", e)))?;
 
-        let subfolder_ids: Vec<Uuid> = stmt.query_map(params![folder_id_str], |row| {
-            let id_str: String = row.get("id")?;
-            Ok(Uuid::parse_str(&id_str).unwrap())
-        }).map_err(|e| VaultError::DatabaseError(format!("하위 폴더 조회 실패: {}", e)))?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 수집 실패: {}", e)))?;
+        let subfolder_ids: Vec<Uuid> = stmt
+            .query_map(params![folder_id_str], |row| {
+                let id_str: String = row.get("id")?;
+                Ok(Uuid::parse_str(&id_str).unwrap())
+            })
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 조회 실패: {}", e)))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 수집 실패: {}", e)))?;
 
         // 각 하위 폴더의 파일 개수를 재귀적으로 계산
         for subfolder_id in subfolder_ids {
@@ -832,25 +1049,29 @@ impl DatabaseService {
     }
 
     /// 하위 폴더 개수를 계산합니다
-    /// 
+    ///
     /// # 매개변수
     /// * `folder_id` - 폴더 ID (None이면 루트)
-    /// 
+    ///
     /// # 반환값
     /// * `Result<u32, VaultError>` - 하위 폴더 개수
     pub fn count_subfolders(&self, folder_id: Option<Uuid>) -> Result<u32, VaultError> {
-        let conn = self.connection.as_ref()
-            .ok_or_else(|| VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string()))?;
+        let conn = self.connection.as_ref().ok_or_else(|| {
+            VaultError::DatabaseError("데이터베이스가 초기화되지 않았습니다.".to_string())
+        })?;
 
         let folder_id_str = folder_id.map(|id| id.to_string());
-        
-        let mut stmt = conn.prepare(
-            "SELECT COUNT(*) as subfolder_count FROM folders WHERE parent_id = ?1"
-        ).map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
 
-        let subfolder_count: i32 = stmt.query_row(params![folder_id_str], |row| {
-            Ok(row.get("subfolder_count")?)
-        }).map_err(|e| VaultError::DatabaseError(format!("하위 폴더 개수 계산 실패: {}", e)))?;
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) as subfolder_count FROM folders WHERE parent_id = ?1")
+            .map_err(|e| VaultError::DatabaseError(format!("쿼리 준비 실패: {}", e)))?;
+
+        let subfolder_count: i32 = stmt
+            .query_row(
+                params![folder_id_str],
+                |row| Ok(row.get("subfolder_count")?),
+            )
+            .map_err(|e| VaultError::DatabaseError(format!("하위 폴더 개수 계산 실패: {}", e)))?;
 
         Ok(subfolder_count as u32)
     }
@@ -892,7 +1113,8 @@ mod tests {
         db_service.initialize(vault_path).unwrap();
 
         // 폴더 생성
-        let folder_entry = FolderEntry::new("테스트폴더".to_string(), None, "/테스트폴더".to_string());
+        let folder_entry =
+            FolderEntry::new("테스트폴더".to_string(), None, "/테스트폴더".to_string());
         let folder_id = folder_entry.id;
 
         // 폴더 추가

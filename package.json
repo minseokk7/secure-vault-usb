@@ -21,27 +21,33 @@
   "license": "MIT",
   "dependencies": {
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",
-    "lucide-svelte": "^0.400.0"
+    "@tauri-apps/plugin-opener": "^2",
+    "@types/dompurify": "^3.0.5",
+    "@types/marked": "^5.0.2",
+    "@types/turndown": "^5.0.6",
+    "dompurify": "^3.3.1",
+    "lucide-svelte": "^0.400.0",
+    "marked": "^17.0.1",
+    "turndown": "^7.2.2"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
-    "typescript": "~5.6.2",
-    "vite": "^6.0.3",
     "@tauri-apps/cli": "^2",
-    "tailwindcss": "^3.3.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
     "autoprefixer": "^10.4.0",
+    "eslint": "^8.0.0",
     "postcss": "^8.4.0",
     "prettier": "^3.0.0",
     "prettier-plugin-svelte": "^3.0.0",
-    "eslint": "^8.0.0",
-    "@typescript-eslint/eslint-plugin": "^6.0.0",
-    "@typescript-eslint/parser": "^6.0.0"
+    "svelte": "^5.0.0",
+    "svelte-check": "^4.0.0",
+    "tailwindcss": "^3.3.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.3"
   }
 }

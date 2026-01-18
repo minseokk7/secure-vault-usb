@@ -67,14 +67,14 @@ pub enum AuthState {
 }
 
 /// 간단한 PIN 정보
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PinInfo {
     pub hash: String,
     pub salt: Vec<u8>,
 }
 
 /// 간단한 복구 키 정보 (auth_simple 전용)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimpleRecoveryKeyInfo {
     pub hash: String,
     pub is_active: bool,
@@ -107,7 +107,7 @@ impl PinInfo {
     pub fn new(hash: String, salt: Vec<u8>, _complexity: PinComplexity) -> Self {
         Self { hash, salt }
     }
-    
+
     pub fn is_expired(&self) -> bool {
         false // 간단한 구현: 만료되지 않음
     }
@@ -115,13 +115,16 @@ impl PinInfo {
 
 impl SimpleRecoveryKeyInfo {
     pub fn new(hash: String) -> Self {
-        Self { hash, is_active: true }
+        Self {
+            hash,
+            is_active: true,
+        }
     }
-    
+
     pub fn record_usage(&mut self) {
         // 간단한 구현: 아무것도 하지 않음
     }
-    
+
     pub fn deactivate(&mut self) {
         self.is_active = false;
     }
@@ -133,7 +136,7 @@ impl AuthSession {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         Self {
             id: Uuid::new_v4(),
             created_at: now,
@@ -143,20 +146,20 @@ impl AuthSession {
             is_active: true,
         }
     }
-    
+
     pub fn is_expired(&self) -> bool {
         if !self.is_active {
             return true;
         }
-        
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         (now - self.last_activity) > self.timeout_seconds
     }
-    
+
     pub fn refresh_activity(&mut self) {
         if self.is_active && !self.is_expired() {
             self.last_activity = std::time::SystemTime::now()
@@ -165,21 +168,21 @@ impl AuthSession {
                 .as_secs();
         }
     }
-    
+
     pub fn terminate(&mut self) {
         self.is_active = false;
     }
-    
+
     pub fn remaining_time_seconds(&self) -> u64 {
         if !self.is_active {
             return 0;
         }
-        
+
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let elapsed = now - self.last_activity;
         if elapsed >= self.timeout_seconds {
             0
@@ -200,7 +203,7 @@ impl BruteForceProtection {
             base_lockout_seconds: 1800,
         }
     }
-    
+
     pub fn record_failure(&mut self) {
         self.failed_attempts += 1;
         let now = std::time::SystemTime::now()
@@ -208,55 +211,55 @@ impl BruteForceProtection {
             .unwrap()
             .as_secs();
         self.last_failure_time = Some(now);
-        
+
         if self.failed_attempts >= self.max_attempts {
             self.is_locked = true;
             self.lockout_until = Some(now + self.base_lockout_seconds);
         }
     }
-    
+
     pub fn record_success(&mut self) {
         self.failed_attempts = 0;
         self.last_failure_time = None;
         self.is_locked = false;
         self.lockout_until = None;
     }
-    
+
     pub fn is_currently_locked(&self) -> bool {
         if !self.is_locked {
             return false;
         }
-        
+
         if let Some(unlock_time) = self.lockout_until {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             if now >= unlock_time {
                 return false;
             }
         }
-        
+
         true
     }
-    
+
     pub fn remaining_lockout_seconds(&self) -> Option<u64> {
         if !self.is_currently_locked() {
             return None;
         }
-        
+
         if let Some(unlock_time) = self.lockout_until {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            
+
             if unlock_time > now {
                 return Some(unlock_time - now);
             }
         }
-        
+
         None
     }
 }

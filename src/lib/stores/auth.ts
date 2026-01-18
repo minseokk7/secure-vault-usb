@@ -75,13 +75,13 @@ export class AuthService {
 
       // PIN 설정 여부 확인
       const hasPin = await invoke<boolean>('has_pin_set');
-      
+
       // 복구 키 설정 여부 확인
       const hasRecoveryKey = await invoke<boolean>('has_recovery_key_set');
-      
+
       // 현재 인증 상태 확인
       const isAuthenticated = await invoke<boolean>('check_auth_status');
-      
+
       // 세션 남은 시간 확인 (인증된 경우)
       let sessionRemainingTime = 0;
       if (isAuthenticated) {
@@ -119,7 +119,7 @@ export class AuthService {
       if (result) {
         // 로그인 성공 - 상태만 업데이트하고 윈도우 크기 조정은 나중에
         const sessionRemainingTime = await invoke<number>('get_session_remaining_time');
-        
+
         authState.update(state => ({
           ...state,
           isAuthenticated: true,
@@ -153,9 +153,9 @@ export class AuthService {
         });
 
         const remainingAttempts = 5 - (authState.subscribe(s => s.failedAttempts) as any);
-        return { 
-          success: false, 
-          error: remainingAttempts > 0 
+        return {
+          success: false,
+          error: remainingAttempts > 0
             ? `PIN이 올바르지 않습니다. (${remainingAttempts}회 남음)`
             : '5회 연속 실패로 30분간 로그인이 차단됩니다.'
         };
@@ -163,8 +163,8 @@ export class AuthService {
 
     } catch (error) {
       authState.update(state => ({ ...state, isLoading: false }));
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: typeof error === 'string' ? error : '인증 중 오류가 발생했습니다.'
       };
     }
@@ -182,7 +182,7 @@ export class AuthService {
       if (result) {
         // 로그인 성공 - 상태만 업데이트하고 윈도우 크기 조정은 나중에
         const sessionRemainingTime = await invoke<number>('get_session_remaining_time');
-        
+
         authState.update(state => ({
           ...state,
           isAuthenticated: true,
@@ -201,8 +201,8 @@ export class AuthService {
 
     } catch (error) {
       authState.update(state => ({ ...state, isLoading: false }));
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: typeof error === 'string' ? error : '복구 키 인증 중 오류가 발생했습니다.'
       };
     }
@@ -214,7 +214,7 @@ export class AuthService {
   static async logout(): Promise<void> {
     try {
       await invoke('logout');
-      
+
       authState.update(state => ({
         ...state,
         isAuthenticated: false,
@@ -240,8 +240,8 @@ export class AuthService {
       await invoke('change_pin', { currentPin, newPin });
       return { success: true };
     } catch (error) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: typeof error === 'string' ? error : 'PIN 변경 중 오류가 발생했습니다.'
       };
     }
@@ -266,19 +266,19 @@ export class AuthService {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const { LogicalSize } = await import('@tauri-apps/api/window');
-      
+
       const appWindow = getCurrentWindow();
-      
+
       // 파일 매니저에 적합한 크기로 조정 (1400x800)
       await Promise.all([
         appWindow.setSize(new LogicalSize(1400, 800)),
         appWindow.setResizable(true),
         appWindow.setMaximizable(true)
       ]);
-      
+
       // 창을 화면 중앙으로 이동
       await appWindow.center();
-      
+
       console.log('창 크기가 파일 매니저 모드로 조정되었습니다: 1400x800');
     } catch (error) {
       console.error('창 크기 조정 실패:', error);
@@ -292,16 +292,20 @@ export class AuthService {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       const { LogicalSize } = await import('@tauri-apps/api/window');
-      
+
       const appWindow = getCurrentWindow();
-      
+
       // 로그인에 적합한 크기로 조정
-      await appWindow.setSize(new LogicalSize(370, 650));
-      
+      await Promise.all([
+        appWindow.setSize(new LogicalSize(370, 650)),
+        appWindow.setResizable(false),
+        appWindow.setMaximizable(false)
+      ]);
+
       // 창을 화면 중앙으로 이동
       await appWindow.center();
-      
-      console.log('창 크기가 로그인 모드로 조정되었습니다: 370x650');
+
+      console.log('창 크기가 로그인 모드로 조정되었습니다: 370x650 (크기 조절 비활성화)');
     } catch (error) {
       console.error('창 크기 조정 실패:', error);
     }

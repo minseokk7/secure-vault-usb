@@ -3,23 +3,72 @@
 선택된 파일들을 외부로 내보내기 위한 다이얼로그
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
-  import { save } from '@tauri-apps/plugin-dialog';
+  import { createEventDispatcher } from "svelte";
+  import { save } from "@tauri-apps/plugin-dialog";
+
+  // 타입 정의
+  interface FileItem {
+    id: string;
+    file_name?: string;
+    name?: string;
+    original_file_name?: string;
+    file_size?: number;
+    type?: "file" | "folder";
+    [key: string]: any;
+  }
 
   // Props
   export let show = false;
-  export let files = []; // 내보낼 파일들
+  export let files: any[] = []; // 내보낼 파일들
 
   // 이벤트 디스패처
   const dispatch = createEventDispatcher();
 
   // 상태 변수
-  let exportPath = '';
+  let exportPath = "";
   let isExporting = false;
+
+  // 내보내기 타입 계산
+  $: exportType = getExportType(files);
+  $: dialogTitle = getDialogTitle(exportType);
+  $: inputPlaceholder = getPlaceholder(exportType);
+
+  function getExportType(items: any[]) {
+    if (!items || items.length === 0) return "none";
+    if (items.length > 1) return "multiple";
+    return items[0].type === "folder" ? "folder" : "file";
+  }
+
+  function getDialogTitle(type: string) {
+    switch (type) {
+      case "file":
+        return "파일 내보내기";
+      case "folder":
+        return "폴더 내보내기";
+      case "multiple":
+        return "내보내기";
+      default:
+        return "내보내기";
+    }
+  }
+
+  function getPlaceholder(type: string) {
+    switch (type) {
+      case "file":
+        return "파일 저장 경로";
+      case "folder":
+        return "폴더 저장 경로";
+      case "multiple":
+        return "폴더 경로";
+      default:
+        return "저장 경로";
+    }
+  }
 
   // 다이얼로그가 열릴 때마다 초기화
   $: if (show) {
-    exportPath = '';
+    console.log("ExportDialog shown with files:", files);
+    exportPath = "";
     isExporting = false;
   }
 
@@ -27,44 +76,47 @@
   async function handleSelectPath() {
     try {
       let selected;
-      
-      if (files.length === 1) {
-        // 단일 파일: 파일 저장 다이얼로그
+
+      // 단일 파일이고 폴더가 아닌 경우에만 파일 저장 다이얼로그 사용
+      if (files.length === 1 && files[0].type !== "folder") {
         selected = await save({
-          title: '파일 저장 위치 선택',
-          defaultPath: files[0].original_file_name || files[0].file_name
+          title: "파일 저장 위치 선택",
+          defaultPath: files[0].original_file_name || files[0].file_name,
         });
       } else {
-        // 다중 파일: 폴더 선택 다이얼로그
-        const { open } = await import('@tauri-apps/plugin-dialog');
+        // 다중 파일 또는 폴더 내보내기: 폴더 선택 다이얼로그
+        const { open } = await import("@tauri-apps/plugin-dialog");
         selected = await open({
           directory: true,
-          title: '내보낼 폴더 선택'
+          title:
+            files.length === 1 && files[0].type === "folder"
+              ? "내보낼 위치 선택"
+              : "내보낼 폴더 선택",
         });
       }
-      
+
       if (selected) {
         exportPath = selected;
       }
     } catch (error) {
-      console.error('경로 선택 실패:', error);
+      console.error("경로 선택 실패:", error);
     }
   }
 
   // 내보내기 실행
   async function handleExport() {
     if (!exportPath.trim()) {
-      alert('내보낼 경로를 선택해주세요.');
+      alert("내보낼 경로를 선택해주세요.");
       return;
     }
 
     isExporting = true;
 
     try {
-      dispatch('exported', { exportPath: exportPath.trim() });
+      dispatch("exported", { exportPath: exportPath.trim() });
       // show = false; // 부모 컴포넌트에서 처리하도록 제거
     } catch (error) {
-      console.error('내보내기 실패:', error);
+      console.error("내보내기 실패:", error);
       alert(`내보내기 실패: ${error}`);
     } finally {
       isExporting = false;
@@ -74,20 +126,19 @@
   // 취소 처리
   function handleCancel() {
     if (!isExporting) {
-      dispatch('close'); // 닫기 이벤트 발생
-      // show = false; // 부모 컴포넌트에서 처리하도록 제거
+      dispatch("close"); // 닫기 이벤트 발생
     }
   }
 
   // 파일 크기 포맷팅
-  function formatFileSize(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
-    
+  function formatFileSize(bytes: number) {
+    if (!bytes || bytes === 0) return "0 B";
+
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const sizes = ["B", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   }
 
   // 총 크기 계산
@@ -97,51 +148,65 @@
 </script>
 
 {#if show}
+  <!-- svelte-ignore a11y-click-events-have-key-events -->
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
   <div class="modal-overlay" onclick={handleCancel}>
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
     <div class="modal-content" onclick={(e) => e.stopPropagation()}>
       <div class="modal-header">
-        <h2>📤 파일 내보내기</h2>
+        <h2>📤 {dialogTitle}</h2>
         <button class="close-btn" onclick={handleCancel} disabled={isExporting}>
           ✕
         </button>
       </div>
-      
+
       <div class="modal-body">
         {#if !isExporting}
           <div class="export-setup">
             <div class="files-summary">
-              <h3>내보낼 파일 ({files.length}개)</h3>
+              <h3>내보낼 항목 ({files.length}개)</h3>
               <div class="files-list">
                 {#each files.slice(0, 5) as file}
                   <div class="file-row">
-                    <span class="file-icon">📄</span>
-                    <span class="file-name">{file.file_name}</span>
-                    <span class="file-size">{formatFileSize(file.file_size)}</span>
+                    <span class="file-icon"
+                      >{file.type === "folder" ? "📁" : "📄"}</span
+                    >
+                    <span class="file-name">{file.file_name || file.name}</span>
+                    {#if file.file_size}
+                      <span class="file-size"
+                        >{formatFileSize(file.file_size)}</span
+                      >
+                    {/if}
                   </div>
                 {/each}
-                
+
                 {#if files.length > 5}
                   <div class="more-files">
-                    ... 외 {files.length - 5}개 파일
+                    ... 외 {files.length - 5}개 항목
                   </div>
                 {/if}
               </div>
-              
-              <div class="total-info">
-                총 크기: {formatFileSize(getTotalSize())}
-              </div>
+
+              {#if files.some((f) => f.file_size)}
+                <div class="total-info">
+                  총 크기: {formatFileSize(getTotalSize())}
+                </div>
+              {/if}
             </div>
-            
+
             <div class="path-selection">
               <label for="export-path">
-                {files.length === 1 ? '저장 위치:' : '내보낼 폴더:'}
+                {files.length === 1 && files[0].type !== "folder"
+                  ? "저장 위치:"
+                  : "내보낼 위치:"}
               </label>
               <div class="path-input-group">
                 <input
                   id="export-path"
                   type="text"
                   bind:value={exportPath}
-                  placeholder={files.length === 1 ? '파일 저장 경로' : '폴더 경로'}
+                  placeholder={inputPlaceholder}
                   class="path-input"
                 />
                 <button class="select-path-btn" onclick={handleSelectPath}>
@@ -149,24 +214,22 @@
                 </button>
               </div>
             </div>
-            
+
             <div class="button-group">
-              <button class="cancel-btn" onclick={handleCancel}>
-                취소
-              </button>
-              <button 
-                class="export-btn" 
+              <button class="cancel-btn" onclick={handleCancel}> 취소 </button>
+              <button
+                class="export-btn"
                 onclick={handleExport}
                 disabled={!exportPath.trim()}
               >
-                내보내기 ({files.length}개 파일)
+                {dialogTitle} ({files.length}개 항목)
               </button>
             </div>
           </div>
         {:else}
           <div class="export-progress">
             <div class="progress-icon">📤</div>
-            <h3>파일 내보내기 중...</h3>
+            <h3>내보내기 중...</h3>
             <p>잠시만 기다려주세요.</p>
           </div>
         {/if}
@@ -359,7 +422,8 @@
     border-top: 1px solid #e9ecef;
   }
 
-  .cancel-btn, .export-btn {
+  .cancel-btn,
+  .export-btn {
     padding: 0.8rem 1.5rem;
     border: none;
     border-radius: 6px;
@@ -420,7 +484,11 @@
   }
 
   @keyframes bounce {
-    0%, 20%, 50%, 80%, 100% {
+    0%,
+    20%,
+    50%,
+    80%,
+    100% {
       transform: translateY(0);
     }
     40% {
