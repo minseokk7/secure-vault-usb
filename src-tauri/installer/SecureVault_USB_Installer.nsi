@@ -8,7 +8,7 @@
 
 ; Basic settings
 !define PRODUCT_NAME "SecureVault"
-!define PRODUCT_VERSION "1.0.0"
+!define PRODUCT_VERSION "1.0.3"
 
 Name "${PRODUCT_NAME} ${PRODUCT_VERSION}"
 OutFile "SecureVault_USB_Installer.exe"
@@ -214,8 +214,8 @@ Section "SecureVault" SecMain
     SetFileAttributes "$INSTDIR\.securevault" NORMAL
     RMDir /r "$INSTDIR\.securevault"
   
-  ; Install executable
-  File "release\SecureVault.exe"
+  ; Install executable from Tauri build output
+  File /oname=SecureVault.exe "..\target\release\secure-vault-tauri.exe"
 SectionEnd
 
 Function .onInstSuccess
