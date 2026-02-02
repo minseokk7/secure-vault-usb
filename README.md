@@ -27,6 +27,7 @@ SecureVault는 USB 드라이브에서 실행되도록 설계되었습니다.
 - **File Encryption**: AES-256-GCM 알고리즘으로 파일 내용 암호화.
 - **Metadata Encryption**: 파일명, 폴더 구조, 메모 내용 등 모든 메타데이터도 SQLCipher(AES-256)로 암호화된 DB에 저장됩니다.
 - **Zero Knowledge**: 오직 당신의 PIN만이 데이터를 복호화할 수 있습니다. 개발자도 복구할 수 없습니다.
+- **Zeroize Memory**: 민감한 키와 암호 데이터는 사용 후 메모리에서 안전하게 소거됩니다 (Rust `zeroize` 크레이트 사용).
 
 ### 4. �️ 안전한 파일 삭제 (Secure Delete)
 - **3회 덮어쓰기**: 파일 삭제 시 디스크의 암호화 파일을 0으로 3회 덮어쓴 후 삭제합니다.
