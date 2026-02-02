@@ -1,7 +1,7 @@
 # 🔒 SecureVault
 ### USB Portable Encrypted Safe - Your Data, Only for Your Eyes.
 
-![Version](https://img.shields.io/badge/version-v1.0.3-blue) ![Security](https://img.shields.io/badge/security-AES256--GCM-green) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
+![Version](https://img.shields.io/badge/version-v1.1.3-blue) ![Security](https://img.shields.io/badge/security-AES256--GCM-green) ![Platform](https://img.shields.io/badge/platform-Windows-blue) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 **SecureVault**는 USB 드라이브에 최적화된 **완전 오프라인 보안 파일 금고**입니다.
 클라우드를 믿지 못하시나요? 당신의 가장 소중한 데이터를 물리적으로 격리된 USB에 보관하고, 어디서든 안전하게 접근하세요.
@@ -28,11 +28,15 @@ SecureVault는 USB 드라이브에서 실행되도록 설계되었습니다.
 - **Metadata Encryption**: 파일명, 폴더 구조, 메모 내용 등 모든 메타데이터도 SQLCipher(AES-256)로 암호화된 DB에 저장됩니다.
 - **Zero Knowledge**: 오직 당신의 PIN만이 데이터를 복호화할 수 있습니다. 개발자도 복구할 수 없습니다.
 
-### 4. 📝 보안 메모장 & 뷰어
+### 4. �️ 안전한 파일 삭제 (Secure Delete)
+- **3회 덮어쓰기**: 파일 삭제 시 디스크의 암호화 파일을 0으로 3회 덮어쓴 후 삭제합니다.
+- **복구 불가능**: 포렌식 도구로도 삭제된 파일을 복구할 수 없습니다.
+
+### 5. �📝 보안 메모장 & 뷰어
 - **Encrypted Memo**: 텍스트 메모를 암호화하여 DB에 안전하게 저장합니다.
 - **In-Memory Viewer**: 이미지, 텍스트 파일을 디스크에 임시 파일로 저장하지 않고, **RAM에서 즉시 복호화하여 표시**합니다. 뷰어를 닫으면 데이터는 메모리에서 즉시 사라집니다.
 
-### 5. 🚫 100% 오프라인 & 네트워크 차단
+### 6. 🚫 100% 오프라인 & 네트워크 차단
 - SecureVault는 인터넷 연결을 전혀 사용하지 않습니다.
 - 백엔드(Rust)에서 네트워크 관련 라이브러리를 의도적으로 배제하거나 차단하여, 해킹이나 데이터 유출 가능성을 원천 봉쇄했습니다.
 
